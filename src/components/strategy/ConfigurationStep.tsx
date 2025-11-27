@@ -11,15 +11,46 @@ interface Props {
 }
 
 const instruments = [
+  // Major Forex Pairs
   { label: "EUR/USD", value: "EURUSD", category: "Forex" },
   { label: "GBP/USD", value: "GBPUSD", category: "Forex" },
   { label: "USD/JPY", value: "USDJPY", category: "Forex" },
+  { label: "AUD/USD", value: "AUDUSD", category: "Forex" },
+  { label: "USD/CAD", value: "USDCAD", category: "Forex" },
+  { label: "NZD/USD", value: "NZDUSD", category: "Forex" },
+  { label: "USD/CHF", value: "USDCHF", category: "Forex" },
+  // Cross Pairs
+  { label: "EUR/JPY", value: "EURJPY", category: "Forex" },
+  { label: "GBP/JPY", value: "GBPJPY", category: "Forex" },
+  { label: "AUD/JPY", value: "AUDJPY", category: "Forex" },
+  { label: "EUR/GBP", value: "EURGBP", category: "Forex" },
+  { label: "EUR/CHF", value: "EURCHF", category: "Forex" },
+  { label: "GBP/AUD", value: "GBPAUD", category: "Forex" },
+  // Indices
   { label: "NASDAQ 100", value: "NAS100", category: "Indices" },
-  { label: "Dow Jones", value: "US30", category: "Indices" },
+  { label: "Dow Jones 30", value: "US30", category: "Indices" },
+  { label: "S&P 500", value: "SPX500", category: "Indices" },
+  { label: "Germany 40", value: "GER40", category: "Indices" },
+  // Volatility Indices
+  { label: "Volatility 10", value: "VOL10", category: "Synthetic" },
+  { label: "Volatility 25", value: "VOL25", category: "Synthetic" },
+  { label: "Volatility 50", value: "VOL50", category: "Synthetic" },
   { label: "Volatility 75", value: "VOL75", category: "Synthetic" },
   { label: "Volatility 100", value: "VOL100", category: "Synthetic" },
+  // Boom & Crash Indices
+  { label: "Boom 500", value: "BOOM500", category: "Synthetic" },
   { label: "Boom 1000", value: "BOOM1000", category: "Synthetic" },
   { label: "Crash 500", value: "CRASH500", category: "Synthetic" },
+  { label: "Crash 1000", value: "CRASH1000", category: "Synthetic" },
+  // Jump Indices
+  { label: "Jump 10", value: "JUMP10", category: "Synthetic" },
+  { label: "Jump 25", value: "JUMP25", category: "Synthetic" },
+  { label: "Jump 50", value: "JUMP50", category: "Synthetic" },
+  { label: "Jump 75", value: "JUMP75", category: "Synthetic" },
+  { label: "Jump 100", value: "JUMP100", category: "Synthetic" },
+  // Other Synthetic Indices
+  { label: "Step Index", value: "STEP", category: "Synthetic" },
+  { label: "Range Break", value: "RANGEBREAK", category: "Synthetic" },
 ];
 
 const sessions = [
@@ -53,27 +84,29 @@ export const ConfigurationStep = ({ config, setConfig }: Props) => {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {["Forex", "Indices", "Synthetic"].map((category) => (
-            <div key={category} className="space-y-2">
-              <Badge variant="outline" className="mb-2">
-                {category}
+            <div key={category} className="space-y-2 bg-secondary/20 p-4 rounded-lg border border-border">
+              <Badge variant="outline" className="mb-3">
+                {category} ({instruments.filter((i) => i.category === category).length})
               </Badge>
-              {instruments
-                .filter((i) => i.category === category)
-                .map((instrument) => (
-                  <div key={instrument.value} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={instrument.value}
-                      checked={config.instruments.includes(instrument.value)}
-                      onCheckedChange={() => toggleInstrument(instrument.value)}
-                    />
-                    <label
-                      htmlFor={instrument.value}
-                      className="text-sm cursor-pointer hover:text-primary transition-colors"
-                    >
-                      {instrument.label}
-                    </label>
-                  </div>
-                ))}
+              <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
+                {instruments
+                  .filter((i) => i.category === category)
+                  .map((instrument) => (
+                    <div key={instrument.value} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={instrument.value}
+                        checked={config.instruments.includes(instrument.value)}
+                        onCheckedChange={() => toggleInstrument(instrument.value)}
+                      />
+                      <label
+                        htmlFor={instrument.value}
+                        className="text-sm cursor-pointer hover:text-primary transition-colors"
+                      >
+                        {instrument.label}
+                      </label>
+                    </div>
+                  ))}
+              </div>
             </div>
           ))}
         </div>

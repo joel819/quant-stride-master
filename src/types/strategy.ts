@@ -1,4 +1,10 @@
-export type Instrument = "EURUSD" | "GBPUSD" | "USDJPY" | "NAS100" | "US30" | "VOL75" | "VOL100" | "BOOM1000" | "CRASH500";
+export type Instrument = 
+  | "EURUSD" | "GBPUSD" | "USDJPY" | "AUDUSD" | "USDCAD" | "NZDUSD" | "USDCHF" 
+  | "EURJPY" | "GBPJPY" | "AUDJPY" | "EURGBP" | "EURCHF" | "GBPAUD"
+  | "NAS100" | "US30" | "SPX500" | "GER40"
+  | "VOL10" | "VOL25" | "VOL50" | "VOL75" | "VOL100" 
+  | "BOOM500" | "BOOM1000" | "CRASH500" | "CRASH1000"
+  | "STEP" | "RANGEBREAK" | "JUMP10" | "JUMP25" | "JUMP50" | "JUMP75" | "JUMP100";
 
 export type Timeframe = "1m" | "5m" | "15m";
 
