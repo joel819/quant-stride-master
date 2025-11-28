@@ -19,54 +19,51 @@ export const CodeGeneratorStep = ({ config }: Props) => {
     }
   };
 
+  const getIndicatorHandleName = (type: string, idx: number) => {
+    const typeMap: Record<string, string> = {
+      "EMA": "ma",
+      "SMA": "ma",
+      "RSI": "rsi",
+      "MACD": "macd",
+      "ATR": "atr",
+      "BB": "bb",
+      "Stochastic": "stoch"
+    };
+    return `handle_${typeMap[type] || type.toLowerCase()}_${idx}`;
+  };
+
   const generateIndicatorHandles = () => {
     return config.indicators.map((ind, idx) => {
-      switch (ind.type) {
-        case "EMA":
-        case "SMA":
-          return `int handle_ma_${idx};`;
-        case "RSI":
-          return `int handle_rsi_${idx};`;
-        case "MACD":
-          return `int handle_macd_${idx};`;
-        case "ATR":
-          return `int handle_atr_${idx};`;
-        case "BB":
-          return `int handle_bb_${idx};`;
-        case "Stochastic":
-          return `int handle_stoch_${idx};`;
-        case "VWAP":
-          return `// VWAP calculated manually`;
-        default:
-          return "";
-      }
+      if (ind.type === "VWAP") return "// VWAP calculated manually";
+      return `int ${getIndicatorHandleName(ind.type, idx)};`;
     }).filter(Boolean).join("\n");
   };
 
   const generateIndicatorInit = () => {
     return config.indicators.map((ind, idx) => {
+      const handleName = getIndicatorHandleName(ind.type, idx);
       switch (ind.type) {
         case "EMA":
-          return `   handle_ma_${idx} = iMA(_Symbol, ${getTimeframePeriod()}, ${ind.params.period}, 0, MODE_EMA, PRICE_CLOSE);
-   if(handle_ma_${idx} == INVALID_HANDLE) return(INIT_FAILED);`;
+          return `   ${handleName} = iMA(_Symbol, ${getTimeframePeriod()}, ${ind.params.period}, 0, MODE_EMA, PRICE_CLOSE);
+   if(${handleName} == INVALID_HANDLE) return(INIT_FAILED);`;
         case "SMA":
-          return `   handle_ma_${idx} = iMA(_Symbol, ${getTimeframePeriod()}, ${ind.params.period}, 0, MODE_SMA, PRICE_CLOSE);
-   if(handle_ma_${idx} == INVALID_HANDLE) return(INIT_FAILED);`;
+          return `   ${handleName} = iMA(_Symbol, ${getTimeframePeriod()}, ${ind.params.period}, 0, MODE_SMA, PRICE_CLOSE);
+   if(${handleName} == INVALID_HANDLE) return(INIT_FAILED);`;
         case "RSI":
-          return `   handle_rsi_${idx} = iRSI(_Symbol, ${getTimeframePeriod()}, ${ind.params.period}, PRICE_CLOSE);
-   if(handle_rsi_${idx} == INVALID_HANDLE) return(INIT_FAILED);`;
+          return `   ${handleName} = iRSI(_Symbol, ${getTimeframePeriod()}, ${ind.params.period}, PRICE_CLOSE);
+   if(${handleName} == INVALID_HANDLE) return(INIT_FAILED);`;
         case "MACD":
-          return `   handle_macd_${idx} = iMACD(_Symbol, ${getTimeframePeriod()}, ${ind.params.fast || 12}, ${ind.params.slow || 26}, ${ind.params.signal || 9}, PRICE_CLOSE);
-   if(handle_macd_${idx} == INVALID_HANDLE) return(INIT_FAILED);`;
+          return `   ${handleName} = iMACD(_Symbol, ${getTimeframePeriod()}, ${ind.params.fast || 12}, ${ind.params.slow || 26}, ${ind.params.signal || 9}, PRICE_CLOSE);
+   if(${handleName} == INVALID_HANDLE) return(INIT_FAILED);`;
         case "ATR":
-          return `   handle_atr_${idx} = iATR(_Symbol, ${getTimeframePeriod()}, ${ind.params.period || 14});
-   if(handle_atr_${idx} == INVALID_HANDLE) return(INIT_FAILED);`;
+          return `   ${handleName} = iATR(_Symbol, ${getTimeframePeriod()}, ${ind.params.period || 14});
+   if(${handleName} == INVALID_HANDLE) return(INIT_FAILED);`;
         case "BB":
-          return `   handle_bb_${idx} = iBands(_Symbol, ${getTimeframePeriod()}, ${ind.params.period || 20}, 0, ${ind.params.deviation || 2}, PRICE_CLOSE);
-   if(handle_bb_${idx} == INVALID_HANDLE) return(INIT_FAILED);`;
+          return `   ${handleName} = iBands(_Symbol, ${getTimeframePeriod()}, ${ind.params.period || 20}, 0, ${ind.params.deviation || 2}, PRICE_CLOSE);
+   if(${handleName} == INVALID_HANDLE) return(INIT_FAILED);`;
         case "Stochastic":
-          return `   handle_stoch_${idx} = iStochastic(_Symbol, ${getTimeframePeriod()}, ${ind.params.kPeriod || 5}, ${ind.params.dPeriod || 3}, ${ind.params.slowing || 3}, MODE_SMA, STO_LOWHIGH);
-   if(handle_stoch_${idx} == INVALID_HANDLE) return(INIT_FAILED);`;
+          return `   ${handleName} = iStochastic(_Symbol, ${getTimeframePeriod()}, ${ind.params.kPeriod || 5}, ${ind.params.dPeriod || 3}, ${ind.params.slowing || 3}, MODE_SMA, STO_LOWHIGH);
+   if(${handleName} == INVALID_HANDLE) return(INIT_FAILED);`;
         default:
           return "";
       }
@@ -111,28 +108,36 @@ export const CodeGeneratorStep = ({ config }: Props) => {
   const generateStopLossCalculation = () => {
     switch (config.stopLoss.type) {
       case "atr":
+        const atrHandle = config.indicators.findIndex(ind => ind.type === "ATR");
+        const handleName = atrHandle >= 0 ? getIndicatorHandleName("ATR", atrHandle) : "handle_atr_0";
         return `   // ATR-based stop loss
-   double atr[];
-   ArraySetAsSeries(atr, true);
-   if(CopyBuffer(handle_atr_0, 0, 0, 1, atr) <= 0) return;
-   double stopLossPips = atr[0] * ${config.stopLoss.atrMultiplier || 2} / _Point;`;
+   double atrValue[];
+   ArraySetAsSeries(atrValue, true);
+   if(CopyBuffer(${handleName}, 0, 0, 1, atrValue) > 0)
+   {
+      stopLossPips = atrValue[0] * ${config.stopLoss.atrMultiplier || 2} / _Point;
+   }
+   else
+   {
+      stopLossPips = StopLossPips; // Fallback to default
+   }`;
       case "structure":
         return `   // Market structure stop loss
    // Implement swing high/low logic for structure-based SL
-   double stopLossPips = StopLossPips;`;
+   stopLossPips = StopLossPips;`;
       default:
-        return `   double stopLossPips = StopLossPips;`;
+        return `   stopLossPips = StopLossPips;`;
     }
   };
 
   const generateTakeProfitCalculation = () => {
     switch (config.takeProfit.type) {
       case "rr":
-        return `   double takeProfit = stopLoss * TakeProfitRatio;`;
+        return `   double takeProfitPips = stopLossPips * TakeProfitRatio;`;
       case "trailing":
-        return `   double takeProfit = stopLoss * 3; // Initial TP, will trail`;
+        return `   double takeProfitPips = stopLossPips * 3.0; // Initial TP, will trail`;
       default:
-        return `   double takeProfit = ${config.takeProfit.pips || 20} * _Point * 10;`;
+        return `   double takeProfitPips = ${config.takeProfit.pips || 20};`;
     }
   };
 
@@ -158,7 +163,7 @@ ${generateIndicatorHandles()}
 
 //--- Global Variables
 double dailyPnL = 0.0;
-datetime lastTradeDate = 0;
+datetime lastTradeDate;
 bool dailyTargetReached = false;
 
 //+------------------------------------------------------------------+
@@ -167,6 +172,9 @@ bool dailyTargetReached = false;
 int OnInit()
 {
    Print("Initializing ${config.instruments.join("/")} Strategy EA...");
+   
+   // Initialize date tracking
+   lastTradeDate = TimeCurrent();
    
    // Initialize indicators
 ${generateIndicatorInit()}
@@ -183,7 +191,7 @@ void OnDeinit(const int reason)
    // Release indicator handles
 ${config.indicators.map((ind, idx) => {
   if (ind.type === "VWAP") return "";
-  return `   IndicatorRelease(handle_${ind.type.toLowerCase()}_${idx});`;
+  return `   IndicatorRelease(${getIndicatorHandleName(ind.type, idx)});`;
 }).filter(Boolean).join("\n")}
 }
 
@@ -192,13 +200,16 @@ ${config.indicators.map((ind, idx) => {
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   // Reset daily statistics
-   datetime currentDate = TimeCurrent();
-   if(TimeDay(currentDate) != TimeDay(lastTradeDate))
+   // Reset daily statistics at start of new day
+   MqlDateTime currentTime, lastTradeTime;
+   TimeToStruct(TimeCurrent(), currentTime);
+   TimeToStruct(lastTradeDate, lastTradeTime);
+   
+   if(currentTime.day != lastTradeTime.day || currentTime.mon != lastTradeTime.mon || currentTime.year != lastTradeTime.year)
    {
       dailyPnL = 0.0;
       dailyTargetReached = false;
-      lastTradeDate = currentDate;
+      lastTradeDate = TimeCurrent();
       Print("New trading day started. Daily stats reset.");
    }
    
@@ -293,6 +304,10 @@ void OpenTrade()
    // Calculate lot size
    double lotSize = CalculateLotSize();
    
+   // Declare stop loss and take profit pips
+   double stopLossPips;
+   double takeProfitPips;
+   
    // Calculate stop loss
 ${generateStopLossCalculation()}
    
@@ -306,8 +321,8 @@ ${generateTakeProfitCalculation()}
    double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    
    // Calculate SL and TP prices
-   double slPrice = (orderType == ORDER_TYPE_BUY) ? price - stopLossPips * _Point : price + stopLossPips * _Point;
-   double tpPrice = (orderType == ORDER_TYPE_BUY) ? price + takeProfit : price - takeProfit;
+   double slPrice = (orderType == ORDER_TYPE_BUY) ? price - (stopLossPips * _Point) : price + (stopLossPips * _Point);
+   double tpPrice = (orderType == ORDER_TYPE_BUY) ? price + (takeProfitPips * _Point) : price - (takeProfitPips * _Point);
    
    // Prepare trade request
    MqlTradeRequest request = {};
