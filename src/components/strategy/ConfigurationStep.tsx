@@ -12,53 +12,58 @@ interface Props {
 
 const instruments = [
   // Major Forex Pairs
-  { label: "EUR/USD", value: "EURUSD", category: "Forex" },
-  { label: "GBP/USD", value: "GBPUSD", category: "Forex" },
-  { label: "USD/JPY", value: "USDJPY", category: "Forex" },
-  { label: "AUD/USD", value: "AUDUSD", category: "Forex" },
-  { label: "USD/CAD", value: "USDCAD", category: "Forex" },
-  { label: "NZD/USD", value: "NZDUSD", category: "Forex" },
-  { label: "USD/CHF", value: "USDCHF", category: "Forex" },
+  { label: "EUR/USD", value: "EURUSD", category: "Forex", bestSessions: ["london", "overlap", "newyork"] },
+  { label: "GBP/USD", value: "GBPUSD", category: "Forex", bestSessions: ["london", "overlap", "newyork"] },
+  { label: "USD/JPY", value: "USDJPY", category: "Forex", bestSessions: ["asian", "london", "newyork"] },
+  { label: "AUD/USD", value: "AUDUSD", category: "Forex", bestSessions: ["asian", "london"] },
+  { label: "USD/CAD", value: "USDCAD", category: "Forex", bestSessions: ["newyork", "overlap"] },
+  { label: "NZD/USD", value: "NZDUSD", category: "Forex", bestSessions: ["asian", "london"] },
+  { label: "USD/CHF", value: "USDCHF", category: "Forex", bestSessions: ["london", "overlap"] },
   // Cross Pairs
-  { label: "EUR/JPY", value: "EURJPY", category: "Forex" },
-  { label: "GBP/JPY", value: "GBPJPY", category: "Forex" },
-  { label: "AUD/JPY", value: "AUDJPY", category: "Forex" },
-  { label: "EUR/GBP", value: "EURGBP", category: "Forex" },
-  { label: "EUR/CHF", value: "EURCHF", category: "Forex" },
-  { label: "GBP/AUD", value: "GBPAUD", category: "Forex" },
+  { label: "EUR/JPY", value: "EURJPY", category: "Forex", bestSessions: ["london", "overlap"] },
+  { label: "GBP/JPY", value: "GBPJPY", category: "Forex", bestSessions: ["london", "overlap"] },
+  { label: "AUD/JPY", value: "AUDJPY", category: "Forex", bestSessions: ["asian", "london"] },
+  { label: "EUR/GBP", value: "EURGBP", category: "Forex", bestSessions: ["london", "overlap"] },
+  { label: "EUR/CHF", value: "EURCHF", category: "Forex", bestSessions: ["london"] },
+  { label: "GBP/AUD", value: "GBPAUD", category: "Forex", bestSessions: ["london", "asian"] },
   // Indices
-  { label: "NASDAQ 100", value: "NAS100", category: "Indices" },
-  { label: "Dow Jones 30", value: "US30", category: "Indices" },
-  { label: "S&P 500", value: "SPX500", category: "Indices" },
-  { label: "Germany 40", value: "GER40", category: "Indices" },
-  // Volatility Indices
-  { label: "Volatility 10", value: "VOL10", category: "Synthetic" },
-  { label: "Volatility 25", value: "VOL25", category: "Synthetic" },
-  { label: "Volatility 50", value: "VOL50", category: "Synthetic" },
-  { label: "Volatility 75", value: "VOL75", category: "Synthetic" },
-  { label: "Volatility 100", value: "VOL100", category: "Synthetic" },
-  // Boom & Crash Indices
-  { label: "Boom 500", value: "BOOM500", category: "Synthetic" },
-  { label: "Boom 1000", value: "BOOM1000", category: "Synthetic" },
-  { label: "Crash 500", value: "CRASH500", category: "Synthetic" },
-  { label: "Crash 1000", value: "CRASH1000", category: "Synthetic" },
-  // Jump Indices
-  { label: "Jump 10", value: "JUMP10", category: "Synthetic" },
-  { label: "Jump 25", value: "JUMP25", category: "Synthetic" },
-  { label: "Jump 50", value: "JUMP50", category: "Synthetic" },
-  { label: "Jump 75", value: "JUMP75", category: "Synthetic" },
-  { label: "Jump 100", value: "JUMP100", category: "Synthetic" },
-  // Other Synthetic Indices
-  { label: "Step Index", value: "STEP", category: "Synthetic" },
-  { label: "Range Break", value: "RANGEBREAK", category: "Synthetic" },
+  { label: "NASDAQ 100", value: "NAS100", category: "Indices", bestSessions: ["newyork", "overlap"] },
+  { label: "Dow Jones 30", value: "US30", category: "Indices", bestSessions: ["newyork", "overlap"] },
+  { label: "S&P 500", value: "SPX500", category: "Indices", bestSessions: ["newyork", "overlap"] },
+  { label: "Germany 40", value: "GER40", category: "Indices", bestSessions: ["london"] },
+  // Volatility Indices - 24/7 Trading
+  { label: "Volatility 10", value: "VOL10", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Volatility 25", value: "VOL25", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Volatility 50", value: "VOL50", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Volatility 75", value: "VOL75", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Volatility 100", value: "VOL100", category: "Synthetic", bestSessions: ["24/7"] },
+  // Boom & Crash Indices - 24/7 Trading
+  { label: "Boom 500", value: "BOOM500", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Boom 1000", value: "BOOM1000", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Crash 500", value: "CRASH500", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Crash 1000", value: "CRASH1000", category: "Synthetic", bestSessions: ["24/7"] },
+  // Jump Indices - 24/7 Trading
+  { label: "Jump 10", value: "JUMP10", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Jump 25", value: "JUMP25", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Jump 50", value: "JUMP50", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Jump 75", value: "JUMP75", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Jump 100", value: "JUMP100", category: "Synthetic", bestSessions: ["24/7"] },
+  // Other Synthetic Indices - 24/7 Trading
+  { label: "Step Index", value: "STEP", category: "Synthetic", bestSessions: ["24/7"] },
+  { label: "Range Break", value: "RANGEBREAK", category: "Synthetic", bestSessions: ["24/7"] },
 ];
 
 const sessions = [
-  { label: "London Session", value: "london", time: "08:00-16:00 GMT" },
-  { label: "New York Session", value: "newyork", time: "13:00-21:00 GMT" },
-  { label: "London/NY Overlap", value: "overlap", time: "13:00-16:00 GMT" },
-  { label: "Asian Session", value: "asian", time: "23:00-08:00 GMT" },
+  { label: "London Session", value: "london", time: "08:00-16:00 GMT", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+  { label: "New York Session", value: "newyork", time: "13:00-21:00 GMT", color: "bg-green-500/20 text-green-400 border-green-500/30" },
+  { label: "London/NY Overlap", value: "overlap", time: "13:00-16:00 GMT", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
+  { label: "Asian Session", value: "asian", time: "23:00-08:00 GMT", color: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
 ];
+
+const getSessionBadge = (sessionValue: string) => {
+  const session = sessions.find(s => s.value === sessionValue);
+  return session ? { label: session.label.split(" ")[0], color: session.color } : null;
+};
 
 export const ConfigurationStep = ({ config, setConfig }: Props) => {
   const toggleInstrument = (value: string) => {
@@ -92,18 +97,41 @@ export const ConfigurationStep = ({ config, setConfig }: Props) => {
                 {instruments
                   .filter((i) => i.category === category)
                   .map((instrument) => (
-                    <div key={instrument.value} className="flex items-center space-x-2">
+                    <div key={instrument.value} className="flex items-start space-x-2 group">
                       <Checkbox
                         id={instrument.value}
                         checked={config.instruments.includes(instrument.value)}
                         onCheckedChange={() => toggleInstrument(instrument.value)}
+                        className="mt-1"
                       />
-                      <label
-                        htmlFor={instrument.value}
-                        className="text-sm cursor-pointer hover:text-primary transition-colors"
-                      >
-                        {instrument.label}
-                      </label>
+                      <div className="flex-1 min-w-0">
+                        <label
+                          htmlFor={instrument.value}
+                          className="text-sm cursor-pointer hover:text-primary transition-colors block"
+                        >
+                          {instrument.label}
+                        </label>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {instrument.bestSessions[0] === "24/7" ? (
+                            <Badge variant="outline" className="text-xs px-1.5 py-0 bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+                              24/7
+                            </Badge>
+                          ) : (
+                            instrument.bestSessions.map((session) => {
+                              const badge = getSessionBadge(session);
+                              return badge ? (
+                                <Badge 
+                                  key={session} 
+                                  variant="outline" 
+                                  className={`text-xs px-1.5 py-0 ${badge.color}`}
+                                >
+                                  {badge.label}
+                                </Badge>
+                              ) : null;
+                            })
+                          )}
+                        </div>
+                      </div>
                     </div>
                   ))}
               </div>
