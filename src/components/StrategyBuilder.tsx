@@ -7,6 +7,7 @@ import { RiskManagementStep } from "./strategy/RiskManagementStep";
 import { PerformanceAnalyzerStep } from "./strategy/PerformanceAnalyzerStep";
 import { CodeGeneratorStep } from "./strategy/CodeGeneratorStep";
 import { BacktestGuideStep } from "./strategy/BacktestGuideStep";
+import { TemplateSelector } from "./strategy/TemplateSelector";
 import { StrategyConfig } from "@/types/strategy";
 
 export const StrategyBuilder = () => {
@@ -38,17 +39,22 @@ export const StrategyBuilder = () => {
         </div>
 
         <Card className="card-elevated bg-card/50 backdrop-blur-sm border-border">
-          <Tabs defaultValue="config" className="w-full">
-            <TabsList className="w-full grid grid-cols-6 bg-secondary/50">
+          <Tabs defaultValue="templates" className="w-full">
+            <TabsList className="w-full grid grid-cols-7 bg-secondary/50">
+              <TabsTrigger value="templates">Templates</TabsTrigger>
               <TabsTrigger value="config">Configuration</TabsTrigger>
               <TabsTrigger value="indicators">Indicators</TabsTrigger>
-              <TabsTrigger value="risk">Risk Management</TabsTrigger>
+              <TabsTrigger value="risk">Risk</TabsTrigger>
               <TabsTrigger value="performance">Performance</TabsTrigger>
-              <TabsTrigger value="code">Code Export</TabsTrigger>
+              <TabsTrigger value="code">Code</TabsTrigger>
               <TabsTrigger value="backtest">Backtest</TabsTrigger>
             </TabsList>
 
             <div className="p-6">
+              <TabsContent value="templates">
+                <TemplateSelector onSelectTemplate={setConfig} />
+              </TabsContent>
+
               <TabsContent value="config">
                 <ConfigurationStep config={config} setConfig={setConfig} />
               </TabsContent>
