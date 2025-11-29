@@ -8,9 +8,16 @@ import { PerformanceAnalyzerStep } from "./strategy/PerformanceAnalyzerStep";
 import { CodeGeneratorStep } from "./strategy/CodeGeneratorStep";
 import { BacktestGuideStep } from "./strategy/BacktestGuideStep";
 import { TemplateSelector } from "./strategy/TemplateSelector";
+import { SaveTemplateDialog } from "./SaveTemplateDialog";
 import { StrategyConfig } from "@/types/strategy";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "./ui/button";
+import { LogOut, LogIn } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 export const StrategyBuilder = () => {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const [config, setConfig] = useState<StrategyConfig>({
     instruments: ["EURUSD", "GBPUSD"],
     timeframe: "1m",
@@ -26,16 +33,41 @@ export const StrategyBuilder = () => {
     positionSizePercent: 2,
   });
 
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/auth');
+  };
+
   return (
     <div className="min-h-screen bg-background grid-pattern">
       <div className="container mx-auto py-8 px-4">
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            Quantum Strategy Builder
-          </h1>
-          <p className="text-muted-foreground">
-            Build institutional-grade mechanical trading strategies
-          </p>
+        <div className="mb-8">
+          <div className="flex justify-between items-center mb-4">
+            <div className="text-center flex-1">
+              <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                Quantum Strategy Builder
+              </h1>
+              <p className="text-muted-foreground">
+                Build institutional-grade mechanical trading strategies
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {user ? (
+                <>
+                  <SaveTemplateDialog config={config} />
+                  <Button variant="outline" onClick={handleSignOut}>
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Sign Out
+                  </Button>
+                </>
+              ) : (
+                <Button variant="outline" onClick={() => navigate('/auth')}>
+                  <LogIn className="w-4 h-4 mr-2" />
+                  Sign In
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
 
         <Card className="card-elevated bg-card/50 backdrop-blur-sm border-border">
