@@ -148,15 +148,20 @@ export const CodeGeneratorStep = ({ config }: Props) => {
 //+------------------------------------------------------------------+
 #property copyright "Quantum Strategy Builder"
 #property version   "1.00"
-#property strict
+#property description "Mechanical trading strategy - ${config.instruments.join(", ")}"
 
 //--- Input Parameters
-input double RiskPercent = ${config.positionSizePercent};
-input double StopLossPips = ${config.stopLoss.pips || 10};
-input double TakeProfitRatio = ${config.takeProfit.ratio || 2};
-input int MaxDailyLoss = ${config.maxDailyLoss};
-input double DailyTarget = ${config.dailyTarget};
-input int MagicNumber = 12345;
+input group "Risk Management"
+input double RiskPercent = ${config.positionSizePercent};      // Risk per trade (%)
+input double StopLossPips = ${config.stopLoss.pips || 10};    // Stop Loss (pips)
+input double TakeProfitRatio = ${config.takeProfit.ratio || 2}; // Take Profit Ratio
+
+input group "Daily Limits"
+input int MaxDailyLoss = ${config.maxDailyLoss};              // Max Daily Loss ($)
+input double DailyTarget = ${config.dailyTarget};             // Daily Target ($)
+
+input group "General"
+input int MagicNumber = 12345;                                // Magic Number
 
 //--- Indicator Handles
 ${generateIndicatorHandles()}
