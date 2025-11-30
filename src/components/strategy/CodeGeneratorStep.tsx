@@ -92,17 +92,140 @@ export const CodeGeneratorStep = ({ config }: Props) => {
   const generateEntryLogic = () => {
     if (config.entries.length === 0) {
       return `   // No entry conditions configured
-   // Please add entry conditions in the Strategy Builder
    return false;`;
     }
 
-    return `   // Entry conditions: ${config.entries.map(e => e.description).join(", ")}
-   // Implement based on your configured indicators and conditions
+    // Generate actual indicator value arrays
+    const indicatorArrays: string[] = [];
+    const indicatorCopies: string[] = [];
+    
+    config.indicators.forEach((ind, idx) => {
+      const handleName = getIndicatorHandleName(ind.type, idx);
+      
+      switch (ind.type) {
+        case "EMA":
+        case "SMA":
+          indicatorArrays.push(`   double ${ind.id}_val[];`);
+          indicatorArrays.push(`   ArraySetAsSeries(${ind.id}_val, true);`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, ${ind.id}_val) < 3) return false;`);
+          break;
+        case "RSI":
+          indicatorArrays.push(`   double rsi_val[];`);
+          indicatorArrays.push(`   ArraySetAsSeries(rsi_val, true);`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, rsi_val) < 3) return false;`);
+          break;
+        case "BB":
+          indicatorArrays.push(`   double bb_upper[], bb_middle[], bb_lower[];`);
+          indicatorArrays.push(`   ArraySetAsSeries(bb_upper, true);`);
+          indicatorArrays.push(`   ArraySetAsSeries(bb_middle, true);`);
+          indicatorArrays.push(`   ArraySetAsSeries(bb_lower, true);`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, bb_upper) < 3) return false;  // Upper band`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 1, 0, 3, bb_middle) < 3) return false; // Middle band`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 2, 0, 3, bb_lower) < 3) return false;  // Lower band`);
+          break;
+        case "MACD":
+          indicatorArrays.push(`   double macd_main[], macd_signal[];`);
+          indicatorArrays.push(`   ArraySetAsSeries(macd_main, true);`);
+          indicatorArrays.push(`   ArraySetAsSeries(macd_signal, true);`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, macd_main) < 3) return false;`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 1, 0, 3, macd_signal) < 3) return false;`);
+          break;
+        case "ATR":
+          indicatorArrays.push(`   double atr_val[];`);
+          indicatorArrays.push(`   ArraySetAsSeries(atr_val, true);`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, atr_val) < 3) return false;`);
+          break;
+      }
+    });
+
+    // Get current price data
+    const priceData = `   double close[];
+   ArraySetAsSeries(close, true);
+   if(CopyClose(_Symbol, ${getTimeframePeriod()}, 0, 3, close) < 3) return false;`;
+
+    // Generate actual entry conditions based on strategy type
+    let entryConditions = "";
+    
+    // Check if this is a BB + EMA strategy (like Volatility Breakout)
+    const hasBB = config.indicators.some(ind => ind.type === "BB");
+    const hasEMA = config.indicators.some(ind => ind.type === "EMA");
+    const hasRSI = config.indicators.some(ind => ind.type === "RSI");
+    
+    if (hasBB && hasEMA) {
+      // Volatility breakout or BB squeeze strategy
+      const emaInd = config.indicators.find(ind => ind.type === "EMA");
+      entryConditions = `   
+   // Volatility breakout conditions
+   // Long: Price near lower BB and above EMA (bullish bias)
+   if(close[0] > ${emaInd?.id}_val[0] && close[1] <= bb_lower[1] && close[0] > bb_lower[0])
+   {
+      Print("Long signal: Bounce from lower BB with bullish EMA bias");
+      lastSignal = 1; // Buy signal
+      return true;
+   }
    
-   ${config.entries.map((entry, idx) => `   // Entry ${idx + 1}: ${entry.description}
-   // Logic: ${entry.logic}`).join("\n   ")}
+   // Short: Price near upper BB and below EMA (bearish bias)
+   if(close[0] < ${emaInd?.id}_val[0] && close[1] >= bb_upper[1] && close[0] < bb_upper[0])
+   {
+      Print("Short signal: Rejection from upper BB with bearish EMA bias");
+      lastSignal = -1; // Sell signal
+      return true;
+   }`;
+    } else if (hasEMA && hasRSI) {
+      // EMA + RSI scalping or mean reversion
+      const emaInd = config.indicators.find(ind => ind.type === "EMA");
+      entryConditions = `   
+   // EMA + RSI strategy conditions
+   // Long: Price above EMA with RSI momentum
+   if(close[0] > ${emaInd?.id}_val[0] && rsi_val[0] > 50 && rsi_val[0] < 70 && close[1] < ${emaInd?.id}_val[1])
+   {
+      Print("Long signal: Price pullback to EMA with bullish RSI");
+      lastSignal = 1; // Buy signal
+      return true;
+   }
    
-   return false; // Set to true when conditions met`;
+   // Short: Price below EMA with RSI momentum
+   if(close[0] < ${emaInd?.id}_val[0] && rsi_val[0] < 50 && rsi_val[0] > 30 && close[1] > ${emaInd?.id}_val[1])
+   {
+      Print("Short signal: Price pullback to EMA with bearish RSI");
+      lastSignal = -1; // Sell signal
+      return true;
+   }`;
+    } else if (config.indicators.some(ind => ind.type === "EMA" && ind.id.includes("fast"))) {
+      // EMA crossover strategy
+      entryConditions = `   
+   // EMA crossover strategy
+   // Long: Fast EMA crosses above Slow EMA
+   if(ema_fast_val[0] > ema_slow_val[0] && ema_fast_val[1] <= ema_slow_val[1])
+   {
+      Print("Long signal: Fast EMA crossed above Slow EMA");
+      lastSignal = 1; // Buy signal
+      return true;
+   }
+   
+   // Short: Fast EMA crosses below Slow EMA
+   if(ema_fast_val[0] < ema_slow_val[0] && ema_fast_val[1] >= ema_slow_val[1])
+   {
+      Print("Short signal: Fast EMA crossed below Slow EMA");
+      lastSignal = -1; // Sell signal
+      return true;
+   }`;
+    } else {
+      // Generic fallback
+      entryConditions = `   
+   // Entry conditions: ${config.entries.map(e => e.description).join(", ")}
+   // Implement your specific entry logic here
+   return false;`;
+    }
+
+    return `${indicatorArrays.join("\n")}
+   
+${priceData}
+   
+${indicatorCopies.join("\n")}
+${entryConditions}
+   
+   return false;`;
   };
 
   const generateStopLossCalculation = () => {
@@ -170,6 +293,7 @@ ${generateIndicatorHandles()}
 double dailyPnL = 0.0;
 datetime lastTradeDate;
 bool dailyTargetReached = false;
+int lastSignal = 0; // 1 = buy, -1 = sell, 0 = none
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -319,8 +443,8 @@ ${generateStopLossCalculation()}
    // Calculate take profit
 ${generateTakeProfitCalculation()}
    
-   // Determine trade direction (implement your signal logic)
-   ENUM_ORDER_TYPE orderType = ORDER_TYPE_BUY; // Change based on your signal
+    // Determine trade direction based on lastSignal
+    ENUM_ORDER_TYPE orderType = (lastSignal == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    
    // Get current price
    double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
