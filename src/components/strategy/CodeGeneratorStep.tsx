@@ -151,17 +151,17 @@ export const CodeGeneratorStep = ({ config }: Props) => {
 #property description "Mechanical trading strategy - ${config.instruments.join(", ")}"
 
 //--- Input Parameters
-input group "Risk Management"
-input double RiskPercent = ${config.positionSizePercent};      // Risk per trade (%)
-input double StopLossPips = ${config.stopLoss.pips || 10};    // Stop Loss (pips)
-input double TakeProfitRatio = ${config.takeProfit.ratio || 2}; // Take Profit Ratio
+input group "=== Risk Management ==="
+input double RiskPercent = ${config.positionSizePercent || 1.0};      // Risk per trade (%)
+input double StopLossPips = ${config.stopLoss.pips || 10.0};          // Stop Loss (pips)
+input double TakeProfitRatio = ${config.takeProfit.ratio || 2.0};     // Take Profit Ratio
 
-input group "Daily Limits"
-input int MaxDailyLoss = ${config.maxDailyLoss};              // Max Daily Loss ($)
-input double DailyTarget = ${config.dailyTarget};             // Daily Target ($)
+input group "=== Daily Limits ==="
+input int MaxDailyLoss = ${config.maxDailyLoss || 100};                // Max Daily Loss ($)
+input double DailyTarget = ${config.dailyTarget || 200.0};             // Daily Target ($)
 
-input group "General"
-input int MagicNumber = 12345;                                // Magic Number
+input group "=== General Settings ==="
+input int MagicNumber = 12345;                                         // Magic Number
 
 //--- Indicator Handles
 ${generateIndicatorHandles()}
@@ -285,7 +285,7 @@ void UpdateDailyPnL()
 bool IsValidSession()
 {
    MqlDateTime dt;
-   TimeCurrent(dt);
+   TimeToStruct(TimeCurrent(), dt);
    int hour = dt.hour;
    
 ${generateSessionCheck()}
