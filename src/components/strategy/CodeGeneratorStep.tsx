@@ -279,6 +279,11 @@ input double RiskPercent = ${config.positionSizePercent || 1.0};      // Risk pe
 input double StopLossPips = ${config.stopLoss.pips || 10.0};          // Stop Loss (pips)
 input double TakeProfitRatio = ${config.takeProfit.ratio || 2.0};     // Take Profit Ratio
 
+input group "=== Trailing Stop ==="
+input bool UseTrailingStop = true;                                     // Enable Trailing Stop
+input double TrailingStopDistance = 10.0;                              // Trailing Stop Distance (pips)
+input double TrailingStopActivation = 15.0;                            // Activate after profit (pips)
+
 input group "=== Daily Limits ==="
 input int MaxDailyLoss = ${config.maxDailyLoss || 100};                // Max Daily Loss ($)
 input double DailyTarget = ${config.dailyTarget || 200.0};             // Daily Target ($)
@@ -363,9 +368,14 @@ void OnTick()
    if(!IsValidSession())
       return;
    
-   // Check if we already have an open position
-   if(PositionSelect(_Symbol))
-      return;
+    // Check if we already have an open position
+    if(PositionSelect(_Symbol))
+    {
+       // Manage trailing stop for open position
+       if(UseTrailingStop)
+          ManageTrailingStop();
+       return;
+    }
    
    // Entry logic
    if(CheckEntryConditions())
@@ -511,7 +521,85 @@ double CalculateLotSize()
    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
    lotSize = MathFloor(lotSize / lotStep) * lotStep;
    
-   return NormalizeDouble(lotSize, 2);
+    return NormalizeDouble(lotSize, 2);
+}
+
+//+------------------------------------------------------------------+
+//| Manage trailing stop for open positions                         |
+//+------------------------------------------------------------------+
+void ManageTrailingStop()
+{
+   if(!PositionSelect(_Symbol))
+      return;
+   
+   // Get position details
+   double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double currentSL = PositionGetDouble(POSITION_SL);
+   long positionType = PositionGetInteger(POSITION_TYPE);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   
+   // Get current price
+   double currentPrice = (positionType == POSITION_TYPE_BUY) ? 
+                         SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                         SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   // Calculate profit in pips
+   double profitPips = 0.0;
+   if(positionType == POSITION_TYPE_BUY)
+      profitPips = (currentPrice - positionOpenPrice) / point;
+   else
+      profitPips = (positionOpenPrice - currentPrice) / point;
+   
+   // Check if profit exceeds activation level
+   if(profitPips < TrailingStopActivation)
+      return; // Not enough profit to activate trailing stop
+   
+   // Calculate new stop loss
+   double newSL = 0.0;
+   bool shouldModify = false;
+   
+   if(positionType == POSITION_TYPE_BUY)
+   {
+      // For buy positions, trail below current price
+      newSL = currentPrice - (TrailingStopDistance * point);
+      
+      // Only move SL up, never down
+      if(currentSL == 0.0 || newSL > currentSL)
+         shouldModify = true;
+   }
+   else // POSITION_TYPE_SELL
+   {
+      // For sell positions, trail above current price
+      newSL = currentPrice + (TrailingStopDistance * point);
+      
+      // Only move SL down, never up
+      if(currentSL == 0.0 || newSL < currentSL)
+         shouldModify = true;
+   }
+   
+   // Modify position if needed
+   if(shouldModify)
+   {
+      MqlTradeRequest request = {};
+      MqlTradeResult result = {};
+      
+      request.action = TRADE_ACTION_SLTP;
+      request.symbol = _Symbol;
+      request.sl = NormalizeDouble(newSL, _Digits);
+      request.tp = PositionGetDouble(POSITION_TP); // Keep existing TP
+      
+      if(OrderSend(request, result))
+      {
+         if(result.retcode == TRADE_RETCODE_DONE)
+         {
+            Print("Trailing stop updated: New SL = ", newSL, " | Profit = ", profitPips, " pips");
+         }
+         else
+         {
+            Print("Failed to update trailing stop. Error: ", result.retcode);
+         }
+      }
+   }
 }
 //+------------------------------------------------------------------+`;
   };
