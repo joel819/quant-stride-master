@@ -133,11 +133,11 @@ export const CodeGeneratorStep = ({ config }: Props) => {
   const generateTakeProfitCalculation = () => {
     switch (config.takeProfit.type) {
       case "rr":
-        return `   double takeProfitPips = stopLossPips * TakeProfitRatio;`;
+        return `   takeProfitPips = stopLossPips * TakeProfitRatio;`;
       case "trailing":
-        return `   double takeProfitPips = stopLossPips * 3.0; // Initial TP, will trail`;
+        return `   takeProfitPips = stopLossPips * 3.0; // Initial TP, will trail`;
       default:
-        return `   double takeProfitPips = ${config.takeProfit.pips || 20};`;
+        return `   takeProfitPips = ${config.takeProfit.pips || 20};`;
     }
   };
 
