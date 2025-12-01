@@ -299,6 +299,8 @@ double dailyPnL = 0.0;
 datetime lastTradeDate;
 bool dailyTargetReached = false;
 int lastSignal = 0; // 1 = buy, -1 = sell, 0 = none
+int dailyTradeCount = 0;
+double currentTrailingStopDistance = 0.0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -342,6 +344,7 @@ void OnTick()
    if(currentTime.day != lastTradeTime.day || currentTime.mon != lastTradeTime.mon || currentTime.year != lastTradeTime.year)
    {
       dailyPnL = 0.0;
+      dailyTradeCount = 0;
       dailyTargetReached = false;
       lastTradeDate = TimeCurrent();
       Print("New trading day started. Daily stats reset.");
@@ -361,8 +364,11 @@ void OnTick()
       return;
    }
    
-   // Update daily PnL
+   // Update daily PnL and trade count
    UpdateDailyPnL();
+   
+   // Draw dashboard
+   DrawDashboard();
    
    // Session filter
    if(!IsValidSession())
@@ -385,11 +391,12 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-//| Update daily PnL                                                 |
+//| Update daily PnL and trade count                                 |
 //+------------------------------------------------------------------+
 void UpdateDailyPnL()
 {
    double todayProfit = 0.0;
+   int todayTrades = 0;
    datetime todayStart = iTime(_Symbol, PERIOD_D1, 0);
    
    HistorySelect(todayStart, TimeCurrent());
@@ -400,11 +407,16 @@ void UpdateDailyPnL()
       ulong ticket = HistoryDealGetTicket(i);
       if(HistoryDealGetInteger(ticket, DEAL_MAGIC) == MagicNumber)
       {
+         if(HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_IN)
+         {
+            todayTrades++;
+         }
          todayProfit += HistoryDealGetDouble(ticket, DEAL_PROFIT);
       }
    }
    
    dailyPnL = todayProfit;
+   dailyTradeCount = todayTrades;
    
    // Check if daily target reached
    if(dailyPnL >= DailyTarget)
@@ -592,13 +604,112 @@ void ManageTrailingStop()
       {
          if(result.retcode == TRADE_RETCODE_DONE)
          {
+            currentTrailingStopDistance = TrailingStopDistance;
             Print("Trailing stop updated: New SL = ", newSL, " | Profit = ", profitPips, " pips");
          }
          else
          {
             Print("Failed to update trailing stop. Error: ", result.retcode);
          }
-      }
+       }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Draw on-chart dashboard with real-time statistics               |
+//+------------------------------------------------------------------+
+void DrawDashboard()
+{
+   string prefix = "Dashboard_";
+   int xOffset = 20;
+   int yOffset = 30;
+   int lineHeight = 18;
+   color textColor = clrWhite;
+   color bgColor = C'30,30,40';
+   int fontSize = 9;
+   
+   // Calculate statistics
+   double distanceToTarget = DailyTarget - dailyPnL;
+   double distanceToMaxLoss = MaxDailyLoss + dailyPnL;
+   string trailingStatus = "Inactive";
+   
+   // Check trailing stop status
+   if(PositionSelect(_Symbol) && UseTrailingStop)
+   {
+      double currentPrice = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 
+                            SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                            SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      double profitPips = 0.0;
+      
+      if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+         profitPips = (currentPrice - positionOpenPrice) / point;
+      else
+         profitPips = (positionOpenPrice - currentPrice) / point;
+      
+      if(profitPips >= TrailingStopActivation)
+         trailingStatus = "ACTIVE (" + DoubleToString(TrailingStopDistance, 1) + " pips)";
+      else
+         trailingStatus = "Waiting (" + DoubleToString(TrailingStopActivation - profitPips, 1) + " pips left)";
+   }
+   
+   // Background rectangle
+   CreateLabel(prefix + "BG", xOffset-5, yOffset-5, "", bgColor, fontSize, 400, 120);
+   
+   // Title
+   CreateLabel(prefix + "Title", xOffset, yOffset, "═══ TRADING DASHBOARD ═══", clrGold, fontSize+1);
+   
+   // Daily P&L
+   color plColor = (dailyPnL >= 0) ? clrLime : clrRed;
+   string plText = "Daily P&L: $" + DoubleToString(dailyPnL, 2);
+   CreateLabel(prefix + "PL", xOffset, yOffset + lineHeight * 1, plText, plColor, fontSize);
+   
+   // Trades count
+   CreateLabel(prefix + "Trades", xOffset, yOffset + lineHeight * 2, 
+               "Trades Today: " + IntegerToString(dailyTradeCount), textColor, fontSize);
+   
+   // Distance to target
+   color targetColor = (distanceToTarget <= DailyTarget * 0.2) ? clrLime : clrYellow;
+   CreateLabel(prefix + "Target", xOffset, yOffset + lineHeight * 3, 
+               "To Target: $" + DoubleToString(distanceToTarget, 2), targetColor, fontSize);
+   
+   // Distance to max loss
+   color lossColor = (distanceToMaxLoss <= MaxDailyLoss * 0.2) ? clrRed : clrOrange;
+   CreateLabel(prefix + "MaxLoss", xOffset, yOffset + lineHeight * 4, 
+               "To Max Loss: $" + DoubleToString(distanceToMaxLoss, 2), lossColor, fontSize);
+   
+   // Trailing stop status
+   color tsColor = (trailingStatus == "Inactive") ? clrGray : clrAqua;
+   CreateLabel(prefix + "Trailing", xOffset, yOffset + lineHeight * 5, 
+               "Trailing Stop: " + trailingStatus, tsColor, fontSize);
+   
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Create or update text label on chart                            |
+//+------------------------------------------------------------------+
+void CreateLabel(string name, int x, int y, string text, color clr, int size, int width=0, int height=0)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+   }
+   
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, size);
+   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
+   
+   if(width > 0 && height > 0)
+   {
+      ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+      ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
    }
 }
 //+------------------------------------------------------------------+`;
