@@ -73,7 +73,7 @@ export const CodeGeneratorStep = ({ config }: Props) => {
   const generateSessionCheck = () => {
     if (config.sessions.length === 0) return "   return true; // No session filter";
     
-    return config.sessions.map((s) => {
+    const sessionChecks = config.sessions.map((s) => {
       switch (s) {
         case "london":
           return "   if(hour >= 8 && hour < 16) return true; // London session";
@@ -87,6 +87,11 @@ export const CodeGeneratorStep = ({ config }: Props) => {
           return "";
       }
     }).filter(Boolean).join("\n");
+    
+    return `${sessionChecks}
+   
+   Print("Session filter: Current hour ", hour, " does not match configured sessions");
+   return false;`;
   };
 
   const generateEntryLogic = () => {
@@ -155,66 +160,88 @@ export const CodeGeneratorStep = ({ config }: Props) => {
       // Volatility breakout or BB squeeze strategy
       const emaInd = config.indicators.find(ind => ind.type === "EMA");
       entryConditions = `   
-   // Volatility breakout conditions
-   // Long: Price near lower BB and above EMA (bullish bias)
-   if(close[0] > ${emaInd?.id}_val[0] && close[1] <= bb_lower[1] && close[0] > bb_lower[0])
+   // Volatility Breakout Strategy
+   Print("Checking BB+EMA: Close=", close[0], " EMA=", ${emaInd?.id}_val[0], " BB_U=", bb_upper[0], " BB_L=", bb_lower[0]);
+   
+   // LONG Signal 1: Price breaks above lower BB with bullish EMA trend
+   if(close[0] > ${emaInd?.id}_val[0] && close[0] > bb_lower[0] && close[1] <= bb_lower[1])
    {
-      Print("Long signal: Bounce from lower BB with bullish EMA bias");
-      lastSignal = 1; // Buy signal
+      Print("*** LONG SIGNAL: Breakout above lower BB with EMA support ***");
+      lastSignal = 1;
       return true;
    }
    
-   // Short: Price near upper BB and below EMA (bearish bias)
-   if(close[0] < ${emaInd?.id}_val[0] && close[1] >= bb_upper[1] && close[0] < bb_upper[0])
+   // LONG Signal 2: Price bounces from lower BB zone in uptrend
+   if(close[1] <= bb_lower[1] && close[0] > bb_lower[0] && close[0] > ${emaInd?.id}_val[0])
    {
-      Print("Short signal: Rejection from upper BB with bearish EMA bias");
-      lastSignal = -1; // Sell signal
+      Print("*** LONG SIGNAL: Bounce from lower BB zone (uptrend) ***");
+      lastSignal = 1;
+      return true;
+   }
+   
+   // SHORT Signal 1: Price breaks below upper BB with bearish EMA trend
+   if(close[0] < ${emaInd?.id}_val[0] && close[0] < bb_upper[0] && close[1] >= bb_upper[1])
+   {
+      Print("*** SHORT SIGNAL: Breakout below upper BB with EMA resistance ***");
+      lastSignal = -1;
+      return true;
+   }
+   
+   // SHORT Signal 2: Price rejects from upper BB zone in downtrend
+   if(close[1] >= bb_upper[1] && close[0] < bb_upper[0] && close[0] < ${emaInd?.id}_val[0])
+   {
+      Print("*** SHORT SIGNAL: Rejection from upper BB zone (downtrend) ***");
+      lastSignal = -1;
       return true;
    }`;
     } else if (hasEMA && hasRSI) {
       // EMA + RSI scalping or mean reversion
       const emaInd = config.indicators.find(ind => ind.type === "EMA");
       entryConditions = `   
-   // EMA + RSI strategy conditions
+   // EMA + RSI Strategy
+   Print("Checking EMA+RSI: Close=", close[0], " EMA=", ${emaInd?.id}_val[0], " RSI=", rsi_val[0]);
+   
    // Long: Price above EMA with RSI momentum
    if(close[0] > ${emaInd?.id}_val[0] && rsi_val[0] > 50 && rsi_val[0] < 70 && close[1] < ${emaInd?.id}_val[1])
    {
-      Print("Long signal: Price pullback to EMA with bullish RSI");
-      lastSignal = 1; // Buy signal
+      Print("*** LONG SIGNAL: EMA pullback with bullish RSI ***");
+      lastSignal = 1;
       return true;
    }
    
    // Short: Price below EMA with RSI momentum
    if(close[0] < ${emaInd?.id}_val[0] && rsi_val[0] < 50 && rsi_val[0] > 30 && close[1] > ${emaInd?.id}_val[1])
    {
-      Print("Short signal: Price pullback to EMA with bearish RSI");
-      lastSignal = -1; // Sell signal
+      Print("*** SHORT SIGNAL: EMA pullback with bearish RSI ***");
+      lastSignal = -1;
       return true;
    }`;
     } else if (config.indicators.some(ind => ind.type === "EMA" && ind.id.includes("fast"))) {
       // EMA crossover strategy
       entryConditions = `   
-   // EMA crossover strategy
+   // EMA Crossover Strategy
+   Print("Checking EMA Cross: Fast=", ema_fast_val[0], " Slow=", ema_slow_val[0]);
+   
    // Long: Fast EMA crosses above Slow EMA
    if(ema_fast_val[0] > ema_slow_val[0] && ema_fast_val[1] <= ema_slow_val[1])
    {
-      Print("Long signal: Fast EMA crossed above Slow EMA");
-      lastSignal = 1; // Buy signal
+      Print("*** LONG SIGNAL: Fast EMA crossed above Slow EMA ***");
+      lastSignal = 1;
       return true;
    }
    
    // Short: Fast EMA crosses below Slow EMA
    if(ema_fast_val[0] < ema_slow_val[0] && ema_fast_val[1] >= ema_slow_val[1])
    {
-      Print("Short signal: Fast EMA crossed below Slow EMA");
-      lastSignal = -1; // Sell signal
+      Print("*** SHORT SIGNAL: Fast EMA crossed below Slow EMA ***");
+      lastSignal = -1;
       return true;
    }`;
     } else {
       // Generic fallback
       entryConditions = `   
    // Entry conditions: ${config.entries.map(e => e.description).join(", ")}
-   // Implement your specific entry logic here
+   Print("WARNING: No specific entry logic implemented for this indicator combination");
    return false;`;
     }
 
@@ -336,6 +363,14 @@ ${config.indicators.map((ind, idx) => {
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   static datetime lastBarTime = 0;
+   datetime currentBarTime = iTime(_Symbol, ${getTimeframePeriod()}, 0);
+   
+   // Only check for new trades on new bar
+   if(currentBarTime == lastBarTime)
+      return;
+   lastBarTime = currentBarTime;
+   
    // Reset daily statistics at start of new day
    MqlDateTime currentTime, lastTradeTime;
    TimeToStruct(TimeCurrent(), currentTime);
@@ -347,21 +382,7 @@ void OnTick()
       dailyTradeCount = 0;
       dailyTargetReached = false;
       lastTradeDate = TimeCurrent();
-      Print("New trading day started. Daily stats reset.");
-   }
-   
-   // Check daily target reached
-   if(dailyTargetReached)
-   {
-      Print("Daily target of ", DailyTarget, " reached. No more trades today.");
-      return;
-   }
-   
-   // Check max daily loss
-   if(dailyPnL <= -MaxDailyLoss)
-   {
-      Print("Max daily loss of ", MaxDailyLoss, " reached. Stopping trading for today.");
-      return;
+      Print("========== NEW TRADING DAY STARTED ==========");
    }
    
    // Update daily PnL and trade count
@@ -369,6 +390,20 @@ void OnTick()
    
    // Draw dashboard
    DrawDashboard();
+   
+   // Check daily target reached
+   if(dailyTargetReached)
+   {
+      Print("Daily target of $", DailyTarget, " reached. No more trades today.");
+      return;
+   }
+   
+   // Check max daily loss
+   if(dailyPnL <= -MaxDailyLoss)
+   {
+      Print("Max daily loss of $", MaxDailyLoss, " reached. Stopping trading for today.");
+      return;
+   }
    
    // Session filter
    if(!IsValidSession())
@@ -383,10 +418,17 @@ void OnTick()
        return;
     }
    
+   Print("No position open. Checking entry conditions...");
+   
    // Entry logic
    if(CheckEntryConditions())
    {
+      Print("===== ENTRY CONDITIONS MET! Opening trade... =====");
       OpenTrade();
+   }
+   else
+   {
+      Print("No entry signal on this bar.");
    }
 }
 
