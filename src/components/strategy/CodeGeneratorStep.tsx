@@ -334,6 +334,7 @@ int lastSignal = 0; // 1 = buy, -1 = sell, 0 = none
 int dailyTradeCount = 0;
 double currentTrailingStopDistance = 0.0;
 bool breakevenApplied = false;
+double pipMultiplier = 1.0; // For different symbol types
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -344,6 +345,17 @@ int OnInit()
    
    // Initialize date tracking
    lastTradeDate = TimeCurrent();
+   
+   // Determine pip multiplier based on symbol digits
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   if(digits == 3 || digits == 5)
+      pipMultiplier = 10.0;  // For 5-digit forex / 3-digit JPY pairs
+   else if(digits == 2)
+      pipMultiplier = 1.0;   // For indices like NASDAQ
+   else
+      pipMultiplier = 1.0;   // Default
+   
+   Print("Symbol digits: ", digits, " | Pip multiplier: ", pipMultiplier);
    
    // Initialize indicators
 ${generateIndicatorInit()}
@@ -357,11 +369,16 @@ ${generateIndicatorInit()}
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   // Clean up dashboard objects
+   ObjectsDeleteAll(0, "Dashboard_");
+   
    // Release indicator handles
 ${config.indicators.map((ind, idx) => {
   if (ind.type === "VWAP") return "";
   return `   IndicatorRelease(${getIndicatorHandleName(ind.type, idx)});`;
 }).filter(Boolean).join("\n")}
+   
+   Print("EA deinitialized. Reason: ", reason);
 }
 
 //+------------------------------------------------------------------+
@@ -373,7 +390,7 @@ void OnTick()
    DrawDashboard();
    
    // Manage open positions on EVERY tick (not just new bars)
-   if(PositionSelect(_Symbol))
+   if(HasOpenPosition())
    {
       // Manage breakeven first (before trailing stop)
       if(UseBreakeven && !breakevenApplied)
@@ -427,7 +444,7 @@ void OnTick()
       return;
    
    // Skip entry check if we have an open position
-   if(PositionSelect(_Symbol))
+   if(HasOpenPosition())
       return;
    
    Print("No position open. Checking entry conditions...");
@@ -438,6 +455,46 @@ void OnTick()
       Print("===== ENTRY CONDITIONS MET! Opening trade... =====");
       OpenTrade();
    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if we have an open position with our magic number          |
+//+------------------------------------------------------------------+
+bool HasOpenPosition()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            return true;
+         }
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Select our position by magic number                              |
+//+------------------------------------------------------------------+
+bool SelectOurPosition()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            return true;
+         }
+      }
+   }
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -484,9 +541,7 @@ bool IsValidSession()
    TimeToStruct(TimeCurrent(), dt);
    int hour = dt.hour;
    
-${generateSessionCheck()}
-   
-   return false;
+${config.sessions.length === 0 ? '   return true; // No session filter - trade anytime' : generateSessionCheck()}
 }
 
 //+------------------------------------------------------------------+
@@ -515,15 +570,26 @@ ${generateStopLossCalculation()}
    // Calculate take profit
 ${generateTakeProfitCalculation()}
    
-    // Determine trade direction based on lastSignal
-    ENUM_ORDER_TYPE orderType = (lastSignal == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   // Determine trade direction based on lastSignal
+   ENUM_ORDER_TYPE orderType = (lastSignal == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    
    // Get current price
    double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    
+   // Convert pips to price distance
+   double pipValue = _Point * pipMultiplier;
+   double slDistance = stopLossPips * pipValue;
+   double tpDistance = takeProfitPips * pipValue;
+   
    // Calculate SL and TP prices
-   double slPrice = (orderType == ORDER_TYPE_BUY) ? price - (stopLossPips * _Point) : price + (stopLossPips * _Point);
-   double tpPrice = (orderType == ORDER_TYPE_BUY) ? price + (takeProfitPips * _Point) : price - (takeProfitPips * _Point);
+   double slPrice = (orderType == ORDER_TYPE_BUY) ? price - slDistance : price + slDistance;
+   double tpPrice = (orderType == ORDER_TYPE_BUY) ? price + tpDistance : price - tpDistance;
+   
+   // Normalize prices
+   slPrice = NormalizeDouble(slPrice, _Digits);
+   tpPrice = NormalizeDouble(tpPrice, _Digits);
+   
+   Print("Opening ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), " | Price: ", price, " | SL: ", slPrice, " | TP: ", tpPrice, " | Lot: ", lotSize);
    
    // Prepare trade request
    MqlTradeRequest request = {};
@@ -539,22 +605,54 @@ ${generateTakeProfitCalculation()}
    request.deviation = 10;
    request.magic = MagicNumber;
    request.comment = "Quantum Strategy";
+   request.type_filling = ORDER_FILLING_IOC;
    
    // Send order
    if(OrderSend(request, result))
    {
-      if(result.retcode == TRADE_RETCODE_DONE)
+      if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED)
       {
          Print("Order placed successfully. Ticket: ", result.order);
       }
       else
       {
-         Print("Order failed. Error code: ", result.retcode);
+         Print("Order failed. Error code: ", result.retcode, " - ", GetRetcodeDescription(result.retcode));
       }
    }
    else
    {
       Print("OrderSend failed. Error: ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get description of trade retcode                                 |
+//+------------------------------------------------------------------+
+string GetRetcodeDescription(uint retcode)
+{
+   switch(retcode)
+   {
+      case TRADE_RETCODE_REQUOTE: return "Requote";
+      case TRADE_RETCODE_REJECT: return "Rejected";
+      case TRADE_RETCODE_CANCEL: return "Canceled";
+      case TRADE_RETCODE_PLACED: return "Placed";
+      case TRADE_RETCODE_DONE: return "Done";
+      case TRADE_RETCODE_DONE_PARTIAL: return "Done partial";
+      case TRADE_RETCODE_ERROR: return "Error";
+      case TRADE_RETCODE_TIMEOUT: return "Timeout";
+      case TRADE_RETCODE_INVALID: return "Invalid request";
+      case TRADE_RETCODE_INVALID_VOLUME: return "Invalid volume";
+      case TRADE_RETCODE_INVALID_PRICE: return "Invalid price";
+      case TRADE_RETCODE_INVALID_STOPS: return "Invalid stops";
+      case TRADE_RETCODE_TRADE_DISABLED: return "Trade disabled";
+      case TRADE_RETCODE_MARKET_CLOSED: return "Market closed";
+      case TRADE_RETCODE_NO_MONEY: return "No money";
+      case TRADE_RETCODE_PRICE_CHANGED: return "Price changed";
+      case TRADE_RETCODE_PRICE_OFF: return "Price off";
+      case TRADE_RETCODE_INVALID_EXPIRATION: return "Invalid expiration";
+      case TRADE_RETCODE_ORDER_CHANGED: return "Order changed";
+      case TRADE_RETCODE_TOO_MANY_REQUESTS: return "Too many requests";
+      default: return "Unknown error";
    }
 }
 
@@ -565,15 +663,19 @@ double CalculateLotSize()
 {
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double riskAmount = balance * (RiskPercent / 100.0);
-   double stopLossPips = StopLossPips;
    
    // Get tick value for current symbol
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    
-   // Calculate lot size
-   double lotSize = riskAmount / (stopLossPips * point / tickSize * tickValue);
+   // Calculate pip value
+   double pipValue = _Point * pipMultiplier;
+   double pipsValue = (pipValue / tickSize) * tickValue;
+   
+   // Calculate lot size based on risk
+   double lotSize = 0.0;
+   if(pipsValue > 0)
+      lotSize = riskAmount / (StopLossPips * pipsValue);
    
    // Normalize to allowed lot sizes
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
@@ -583,7 +685,7 @@ double CalculateLotSize()
    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
    lotSize = MathFloor(lotSize / lotStep) * lotStep;
    
-    return NormalizeDouble(lotSize, 2);
+   return NormalizeDouble(lotSize, 2);
 }
 
 //+------------------------------------------------------------------+
@@ -591,7 +693,7 @@ double CalculateLotSize()
 //+------------------------------------------------------------------+
 void ManageTrailingStop()
 {
-   if(!PositionSelect(_Symbol))
+   if(!SelectOurPosition())
       return;
    
    // Get position details
@@ -599,7 +701,6 @@ void ManageTrailingStop()
    double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
    double currentSL = PositionGetDouble(POSITION_SL);
    long positionType = PositionGetInteger(POSITION_TYPE);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    
    // Get current price
    double currentPrice = (positionType == POSITION_TYPE_BUY) ? 
@@ -607,49 +708,53 @@ void ManageTrailingStop()
                          SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
    // Calculate profit in pips
+   double pipValue = _Point * pipMultiplier;
    double profitPips = 0.0;
    if(positionType == POSITION_TYPE_BUY)
-      profitPips = (currentPrice - positionOpenPrice) / point;
+      profitPips = (currentPrice - positionOpenPrice) / pipValue;
    else
-      profitPips = (positionOpenPrice - currentPrice) / point;
+      profitPips = (positionOpenPrice - currentPrice) / pipValue;
    
    // Check if profit exceeds activation level
    if(profitPips < TrailingStopActivation)
       return; // Not enough profit to activate trailing stop
    
    // Calculate new stop loss
+   double trailDistance = TrailingStopDistance * pipValue;
    double newSL = 0.0;
    bool shouldModify = false;
    
    if(positionType == POSITION_TYPE_BUY)
    {
       // For buy positions, trail below current price
-      newSL = currentPrice - (TrailingStopDistance * point);
+      newSL = currentPrice - trailDistance;
       
       // Only move SL up, never down
-      if(currentSL == 0.0 || newSL > currentSL)
+      if(currentSL == 0.0 || newSL > currentSL + _Point)
          shouldModify = true;
    }
    else // POSITION_TYPE_SELL
    {
       // For sell positions, trail above current price
-      newSL = currentPrice + (TrailingStopDistance * point);
+      newSL = currentPrice + trailDistance;
       
       // Only move SL down, never up
-      if(currentSL == 0.0 || newSL < currentSL)
+      if(currentSL == 0.0 || newSL < currentSL - _Point)
          shouldModify = true;
    }
    
    // Modify position if needed
    if(shouldModify)
    {
+      newSL = NormalizeDouble(newSL, _Digits);
+      
       MqlTradeRequest request = {};
       MqlTradeResult result = {};
       
       request.action = TRADE_ACTION_SLTP;
       request.position = positionTicket;
       request.symbol = _Symbol;
-      request.sl = NormalizeDouble(newSL, _Digits);
+      request.sl = newSL;
       request.tp = PositionGetDouble(POSITION_TP); // Keep existing TP
       
       if(OrderSend(request, result))
@@ -657,7 +762,7 @@ void ManageTrailingStop()
          if(result.retcode == TRADE_RETCODE_DONE)
          {
             currentTrailingStopDistance = TrailingStopDistance;
-            Print("Trailing stop updated: New SL = ", newSL, " | Profit = ", profitPips, " pips");
+            Print("Trailing stop updated: New SL = ", newSL, " | Profit = ", DoubleToString(profitPips, 1), " pips");
          }
          else
          {
@@ -672,7 +777,7 @@ void ManageTrailingStop()
 //+------------------------------------------------------------------+
 void ManageBreakeven()
 {
-   if(!PositionSelect(_Symbol))
+   if(!SelectOurPosition())
       return;
    
    // Get position details
@@ -680,7 +785,6 @@ void ManageBreakeven()
    double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
    double currentSL = PositionGetDouble(POSITION_SL);
    long positionType = PositionGetInteger(POSITION_TYPE);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    
    // Get current price
    double currentPrice = (positionType == POSITION_TYPE_BUY) ? 
@@ -688,49 +792,53 @@ void ManageBreakeven()
                          SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
    // Calculate profit in pips
+   double pipValue = _Point * pipMultiplier;
    double profitPips = 0.0;
    if(positionType == POSITION_TYPE_BUY)
-      profitPips = (currentPrice - positionOpenPrice) / point;
+      profitPips = (currentPrice - positionOpenPrice) / pipValue;
    else
-      profitPips = (positionOpenPrice - currentPrice) / point;
+      profitPips = (positionOpenPrice - currentPrice) / pipValue;
    
    // Check if profit exceeds activation level
    if(profitPips < BreakevenActivation)
       return; // Not enough profit to activate breakeven
    
    // Calculate breakeven stop loss (entry + buffer)
+   double bufferDistance = BreakevenBuffer * pipValue;
    double breakevenSL = 0.0;
    bool shouldModify = false;
    
    if(positionType == POSITION_TYPE_BUY)
    {
       // For buy positions, set SL above entry price
-      breakevenSL = positionOpenPrice + (BreakevenBuffer * point);
+      breakevenSL = positionOpenPrice + bufferDistance;
       
       // Only modify if current SL is below breakeven level
-      if(currentSL < breakevenSL)
+      if(currentSL < breakevenSL - _Point)
          shouldModify = true;
    }
    else // POSITION_TYPE_SELL
    {
       // For sell positions, set SL below entry price
-      breakevenSL = positionOpenPrice - (BreakevenBuffer * point);
+      breakevenSL = positionOpenPrice - bufferDistance;
       
-      // Only modify if current SL is above breakeven level
-      if(currentSL > breakevenSL || currentSL == 0.0)
+      // Only modify if current SL is above breakeven level or not set
+      if(currentSL == 0.0 || currentSL > breakevenSL + _Point)
          shouldModify = true;
    }
    
    // Modify position if needed
    if(shouldModify)
    {
+      breakevenSL = NormalizeDouble(breakevenSL, _Digits);
+      
       MqlTradeRequest request = {};
       MqlTradeResult result = {};
       
       request.action = TRADE_ACTION_SLTP;
       request.position = positionTicket;
       request.symbol = _Symbol;
-      request.sl = NormalizeDouble(breakevenSL, _Digits);
+      request.sl = breakevenSL;
       request.tp = PositionGetDouble(POSITION_TP); // Keep existing TP
       
       if(OrderSend(request, result))
@@ -738,11 +846,11 @@ void ManageBreakeven()
          if(result.retcode == TRADE_RETCODE_DONE)
          {
             breakevenApplied = true;
-            Print("*** BREAKEVEN APPLIED *** SL moved to ", breakevenSL, " (Entry: ", positionOpenPrice, " + Buffer: ", BreakevenBuffer, " pips)");
+            Print("*** BREAKEVEN APPLIED *** SL moved to ", breakevenSL, " (Entry: ", positionOpenPrice, " + Buffer: ", DoubleToString(BreakevenBuffer, 1), " pips)");
          }
          else
          {
-            Print("Failed to apply breakeven. Error: ", result.retcode);
+            Print("Failed to apply breakeven. Error: ", result.retcode, " - ", GetRetcodeDescription(result.retcode));
          }
       }
    }
@@ -756,9 +864,8 @@ void DrawDashboard()
    string prefix = "Dashboard_";
    int xOffset = 20;
    int yOffset = 30;
-   int lineHeight = 18;
+   int lineHeight = 20;
    color textColor = clrWhite;
-   color bgColor = C'30,30,40';
    int fontSize = 9;
    
    // Calculate statistics
@@ -766,53 +873,67 @@ void DrawDashboard()
    double distanceToMaxLoss = MaxDailyLoss + dailyPnL;
    string trailingStatus = "Inactive";
    string breakevenStatus = "Inactive";
+   double currentProfitPips = 0.0;
    
    // Check breakeven and trailing stop status
-   if(PositionSelect(_Symbol))
+   if(SelectOurPosition())
    {
       double currentPrice = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 
                             SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
                             SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-      double profitPips = 0.0;
+      double pipValue = _Point * pipMultiplier;
       
       if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
-         profitPips = (currentPrice - positionOpenPrice) / point;
+         currentProfitPips = (currentPrice - positionOpenPrice) / pipValue;
       else
-         profitPips = (positionOpenPrice - currentPrice) / point;
+         currentProfitPips = (positionOpenPrice - currentPrice) / pipValue;
       
       // Breakeven status
       if(UseBreakeven)
       {
          if(breakevenApplied)
-            breakevenStatus = "APPLIED (+" + DoubleToString(BreakevenBuffer, 1) + " pips)";
-         else if(profitPips >= BreakevenActivation)
+            breakevenStatus = "LOCKED (+" + DoubleToString(BreakevenBuffer, 1) + " pips)";
+         else if(currentProfitPips >= BreakevenActivation)
             breakevenStatus = "TRIGGERED";
          else
-            breakevenStatus = "Waiting (" + DoubleToString(BreakevenActivation - profitPips, 1) + " pips left)";
+            breakevenStatus = DoubleToString(BreakevenActivation - currentProfitPips, 1) + " pips to BE";
       }
       
       // Trailing stop status
       if(UseTrailingStop)
       {
-         if(profitPips >= TrailingStopActivation)
+         if(currentProfitPips >= TrailingStopActivation)
             trailingStatus = "ACTIVE (" + DoubleToString(TrailingStopDistance, 1) + " pips)";
          else
-            trailingStatus = "Waiting (" + DoubleToString(TrailingStopActivation - profitPips, 1) + " pips left)";
+            trailingStatus = DoubleToString(TrailingStopActivation - currentProfitPips, 1) + " pips to trail";
       }
    }
    
-   // Background rectangle
-   CreateLabel(prefix + "BG", xOffset-5, yOffset-5, "", bgColor, fontSize, 400, 140);
+   // Create background rectangle
+   string bgName = prefix + "BG";
+   if(ObjectFind(0, bgName) < 0)
+   {
+      ObjectCreate(0, bgName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, bgName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, xOffset - 10);
+      ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, yOffset - 10);
+      ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 280);
+      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 170);
+      ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, C'20,20,30');
+      ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      ObjectSetInteger(0, bgName, OBJPROP_COLOR, clrGold);
+      ObjectSetInteger(0, bgName, OBJPROP_WIDTH, 1);
+   }
    
    // Title
-   CreateLabel(prefix + "Title", xOffset, yOffset, "═══ TRADING DASHBOARD ═══", clrGold, fontSize+1);
+   CreateLabel(prefix + "Title", xOffset, yOffset, "══ TRADING DASHBOARD ══", clrGold, fontSize + 1);
    
    // Daily P&L
    color plColor = (dailyPnL >= 0) ? clrLime : clrRed;
-   string plText = "Daily P&L: $" + DoubleToString(dailyPnL, 2);
-   CreateLabel(prefix + "PL", xOffset, yOffset + lineHeight * 1, plText, plColor, fontSize);
+   string plSign = (dailyPnL >= 0) ? "+" : "";
+   CreateLabel(prefix + "PL", xOffset, yOffset + lineHeight * 1, 
+               "Daily P&L: " + plSign + "$" + DoubleToString(MathAbs(dailyPnL), 2), plColor, fontSize);
    
    // Trades count
    CreateLabel(prefix + "Trades", xOffset, yOffset + lineHeight * 2, 
@@ -829,14 +950,33 @@ void DrawDashboard()
                "To Max Loss: $" + DoubleToString(distanceToMaxLoss, 2), lossColor, fontSize);
    
    // Breakeven status
-   color beColor = (breakevenStatus == "Inactive") ? clrGray : (breakevenStatus == "APPLIED" || StringFind(breakevenStatus, "APPLIED") >= 0) ? clrLime : clrYellow;
+   color beColor = clrGray;
+   if(StringFind(breakevenStatus, "LOCKED") >= 0) beColor = clrLime;
+   else if(StringFind(breakevenStatus, "TRIGGERED") >= 0) beColor = clrAqua;
+   else if(breakevenStatus != "Inactive") beColor = clrYellow;
    CreateLabel(prefix + "Breakeven", xOffset, yOffset + lineHeight * 5, 
                "Breakeven: " + breakevenStatus, beColor, fontSize);
    
    // Trailing stop status
-   color tsColor = (trailingStatus == "Inactive") ? clrGray : clrAqua;
+   color tsColor = clrGray;
+   if(StringFind(trailingStatus, "ACTIVE") >= 0) tsColor = clrLime;
+   else if(trailingStatus != "Inactive") tsColor = clrYellow;
    CreateLabel(prefix + "Trailing", xOffset, yOffset + lineHeight * 6, 
-               "Trailing Stop: " + trailingStatus, tsColor, fontSize);
+               "Trailing: " + trailingStatus, tsColor, fontSize);
+   
+   // Current position profit (if any)
+   if(SelectOurPosition())
+   {
+      color profitColor = (currentProfitPips >= 0) ? clrLime : clrRed;
+      string profitSign = (currentProfitPips >= 0) ? "+" : "";
+      CreateLabel(prefix + "Position", xOffset, yOffset + lineHeight * 7, 
+                  "Position: " + profitSign + DoubleToString(currentProfitPips, 1) + " pips", profitColor, fontSize);
+   }
+   else
+   {
+      CreateLabel(prefix + "Position", xOffset, yOffset + lineHeight * 7, 
+                  "Position: No open trade", clrGray, fontSize);
+   }
    
    ChartRedraw();
 }
@@ -844,7 +984,7 @@ void DrawDashboard()
 //+------------------------------------------------------------------+
 //| Create or update text label on chart                            |
 //+------------------------------------------------------------------+
-void CreateLabel(string name, int x, int y, string text, color clr, int size, int width=0, int height=0)
+void CreateLabel(string name, int x, int y, string text, color clr, int size)
 {
    if(ObjectFind(0, name) < 0)
    {
@@ -858,13 +998,7 @@ void CreateLabel(string name, int x, int y, string text, color clr, int size, in
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, size);
-   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
-   
-   if(width > 0 && height > 0)
-   {
-      ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
-      ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
-   }
+   ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
 }
 //+------------------------------------------------------------------+`;
   };
