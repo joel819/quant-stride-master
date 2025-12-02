@@ -306,6 +306,11 @@ input double RiskPercent = ${config.positionSizePercent || 1.0};      // Risk pe
 input double StopLossPips = ${config.stopLoss.pips || 10.0};          // Stop Loss (pips)
 input double TakeProfitRatio = ${config.takeProfit.ratio || 2.0};     // Take Profit Ratio
 
+input group "=== Breakeven ==="
+input bool UseBreakeven = true;                                        // Enable Breakeven
+input double BreakevenActivation = 10.0;                               // Activate after profit (pips)
+input double BreakevenBuffer = 2.0;                                    // Buffer above/below entry (pips)
+
 input group "=== Trailing Stop ==="
 input bool UseTrailingStop = true;                                     // Enable Trailing Stop
 input double TrailingStopDistance = 10.0;                              // Trailing Stop Distance (pips)
@@ -328,6 +333,7 @@ bool dailyTargetReached = false;
 int lastSignal = 0; // 1 = buy, -1 = sell, 0 = none
 int dailyTradeCount = 0;
 double currentTrailingStopDistance = 0.0;
+bool breakevenApplied = false;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -412,11 +418,18 @@ void OnTick()
     // Check if we already have an open position
     if(PositionSelect(_Symbol))
     {
+       // Manage breakeven first (before trailing stop)
+       if(UseBreakeven && !breakevenApplied)
+          ManageBreakeven();
+       
        // Manage trailing stop for open position
        if(UseTrailingStop)
           ManageTrailingStop();
        return;
     }
+    
+    // Reset breakeven flag when no position
+    breakevenApplied = false;
    
    Print("No position open. Checking entry conditions...");
    
@@ -658,6 +671,85 @@ void ManageTrailingStop()
 }
 
 //+------------------------------------------------------------------+
+//| Manage breakeven for open positions                              |
+//+------------------------------------------------------------------+
+void ManageBreakeven()
+{
+   if(!PositionSelect(_Symbol))
+      return;
+   
+   // Get position details
+   double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double currentSL = PositionGetDouble(POSITION_SL);
+   long positionType = PositionGetInteger(POSITION_TYPE);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   
+   // Get current price
+   double currentPrice = (positionType == POSITION_TYPE_BUY) ? 
+                         SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                         SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   // Calculate profit in pips
+   double profitPips = 0.0;
+   if(positionType == POSITION_TYPE_BUY)
+      profitPips = (currentPrice - positionOpenPrice) / point;
+   else
+      profitPips = (positionOpenPrice - currentPrice) / point;
+   
+   // Check if profit exceeds activation level
+   if(profitPips < BreakevenActivation)
+      return; // Not enough profit to activate breakeven
+   
+   // Calculate breakeven stop loss (entry + buffer)
+   double breakevenSL = 0.0;
+   bool shouldModify = false;
+   
+   if(positionType == POSITION_TYPE_BUY)
+   {
+      // For buy positions, set SL above entry price
+      breakevenSL = positionOpenPrice + (BreakevenBuffer * point);
+      
+      // Only modify if current SL is below breakeven level
+      if(currentSL < breakevenSL)
+         shouldModify = true;
+   }
+   else // POSITION_TYPE_SELL
+   {
+      // For sell positions, set SL below entry price
+      breakevenSL = positionOpenPrice - (BreakevenBuffer * point);
+      
+      // Only modify if current SL is above breakeven level
+      if(currentSL > breakevenSL || currentSL == 0.0)
+         shouldModify = true;
+   }
+   
+   // Modify position if needed
+   if(shouldModify)
+   {
+      MqlTradeRequest request = {};
+      MqlTradeResult result = {};
+      
+      request.action = TRADE_ACTION_SLTP;
+      request.symbol = _Symbol;
+      request.sl = NormalizeDouble(breakevenSL, _Digits);
+      request.tp = PositionGetDouble(POSITION_TP); // Keep existing TP
+      
+      if(OrderSend(request, result))
+      {
+         if(result.retcode == TRADE_RETCODE_DONE)
+         {
+            breakevenApplied = true;
+            Print("*** BREAKEVEN APPLIED *** SL moved to ", breakevenSL, " (Entry: ", positionOpenPrice, " + Buffer: ", BreakevenBuffer, " pips)");
+         }
+         else
+         {
+            Print("Failed to apply breakeven. Error: ", result.retcode);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Draw on-chart dashboard with real-time statistics               |
 //+------------------------------------------------------------------+
 void DrawDashboard()
@@ -674,9 +766,10 @@ void DrawDashboard()
    double distanceToTarget = DailyTarget - dailyPnL;
    double distanceToMaxLoss = MaxDailyLoss + dailyPnL;
    string trailingStatus = "Inactive";
+   string breakevenStatus = "Inactive";
    
-   // Check trailing stop status
-   if(PositionSelect(_Symbol) && UseTrailingStop)
+   // Check breakeven and trailing stop status
+   if(PositionSelect(_Symbol))
    {
       double currentPrice = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 
                             SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
@@ -690,14 +783,29 @@ void DrawDashboard()
       else
          profitPips = (positionOpenPrice - currentPrice) / point;
       
-      if(profitPips >= TrailingStopActivation)
-         trailingStatus = "ACTIVE (" + DoubleToString(TrailingStopDistance, 1) + " pips)";
-      else
-         trailingStatus = "Waiting (" + DoubleToString(TrailingStopActivation - profitPips, 1) + " pips left)";
+      // Breakeven status
+      if(UseBreakeven)
+      {
+         if(breakevenApplied)
+            breakevenStatus = "APPLIED (+" + DoubleToString(BreakevenBuffer, 1) + " pips)";
+         else if(profitPips >= BreakevenActivation)
+            breakevenStatus = "TRIGGERED";
+         else
+            breakevenStatus = "Waiting (" + DoubleToString(BreakevenActivation - profitPips, 1) + " pips left)";
+      }
+      
+      // Trailing stop status
+      if(UseTrailingStop)
+      {
+         if(profitPips >= TrailingStopActivation)
+            trailingStatus = "ACTIVE (" + DoubleToString(TrailingStopDistance, 1) + " pips)";
+         else
+            trailingStatus = "Waiting (" + DoubleToString(TrailingStopActivation - profitPips, 1) + " pips left)";
+      }
    }
    
    // Background rectangle
-   CreateLabel(prefix + "BG", xOffset-5, yOffset-5, "", bgColor, fontSize, 400, 120);
+   CreateLabel(prefix + "BG", xOffset-5, yOffset-5, "", bgColor, fontSize, 400, 140);
    
    // Title
    CreateLabel(prefix + "Title", xOffset, yOffset, "═══ TRADING DASHBOARD ═══", clrGold, fontSize+1);
@@ -721,9 +829,14 @@ void DrawDashboard()
    CreateLabel(prefix + "MaxLoss", xOffset, yOffset + lineHeight * 4, 
                "To Max Loss: $" + DoubleToString(distanceToMaxLoss, 2), lossColor, fontSize);
    
+   // Breakeven status
+   color beColor = (breakevenStatus == "Inactive") ? clrGray : (breakevenStatus == "APPLIED" || StringFind(breakevenStatus, "APPLIED") >= 0) ? clrLime : clrYellow;
+   CreateLabel(prefix + "Breakeven", xOffset, yOffset + lineHeight * 5, 
+               "Breakeven: " + breakevenStatus, beColor, fontSize);
+   
    // Trailing stop status
    color tsColor = (trailingStatus == "Inactive") ? clrGray : clrAqua;
-   CreateLabel(prefix + "Trailing", xOffset, yOffset + lineHeight * 5, 
+   CreateLabel(prefix + "Trailing", xOffset, yOffset + lineHeight * 6, 
                "Trailing Stop: " + trailingStatus, tsColor, fontSize);
    
    ChartRedraw();
