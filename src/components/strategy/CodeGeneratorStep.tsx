@@ -369,10 +369,30 @@ ${config.indicators.map((ind, idx) => {
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // Update dashboard on every tick (real-time display)
+   DrawDashboard();
+   
+   // Manage open positions on EVERY tick (not just new bars)
+   if(PositionSelect(_Symbol))
+   {
+      // Manage breakeven first (before trailing stop)
+      if(UseBreakeven && !breakevenApplied)
+         ManageBreakeven();
+      
+      // Manage trailing stop for open position
+      if(UseTrailingStop)
+         ManageTrailingStop();
+   }
+   else
+   {
+      // Reset breakeven flag when no position
+      breakevenApplied = false;
+   }
+   
+   // Only check for new trades on new bar
    static datetime lastBarTime = 0;
    datetime currentBarTime = iTime(_Symbol, ${getTimeframePeriod()}, 0);
    
-   // Only check for new trades on new bar
    if(currentBarTime == lastBarTime)
       return;
    lastBarTime = currentBarTime;
@@ -394,42 +414,21 @@ void OnTick()
    // Update daily PnL and trade count
    UpdateDailyPnL();
    
-   // Draw dashboard
-   DrawDashboard();
-   
    // Check daily target reached
    if(dailyTargetReached)
-   {
-      Print("Daily target of $", DailyTarget, " reached. No more trades today.");
       return;
-   }
    
    // Check max daily loss
    if(dailyPnL <= -MaxDailyLoss)
-   {
-      Print("Max daily loss of $", MaxDailyLoss, " reached. Stopping trading for today.");
       return;
-   }
    
    // Session filter
    if(!IsValidSession())
       return;
    
-    // Check if we already have an open position
-    if(PositionSelect(_Symbol))
-    {
-       // Manage breakeven first (before trailing stop)
-       if(UseBreakeven && !breakevenApplied)
-          ManageBreakeven();
-       
-       // Manage trailing stop for open position
-       if(UseTrailingStop)
-          ManageTrailingStop();
-       return;
-    }
-    
-    // Reset breakeven flag when no position
-    breakevenApplied = false;
+   // Skip entry check if we have an open position
+   if(PositionSelect(_Symbol))
+      return;
    
    Print("No position open. Checking entry conditions...");
    
@@ -438,10 +437,6 @@ void OnTick()
    {
       Print("===== ENTRY CONDITIONS MET! Opening trade... =====");
       OpenTrade();
-   }
-   else
-   {
-      Print("No entry signal on this bar.");
    }
 }
 
@@ -600,6 +595,7 @@ void ManageTrailingStop()
       return;
    
    // Get position details
+   ulong positionTicket = PositionGetInteger(POSITION_TICKET);
    double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
    double currentSL = PositionGetDouble(POSITION_SL);
    long positionType = PositionGetInteger(POSITION_TYPE);
@@ -651,6 +647,7 @@ void ManageTrailingStop()
       MqlTradeResult result = {};
       
       request.action = TRADE_ACTION_SLTP;
+      request.position = positionTicket;
       request.symbol = _Symbol;
       request.sl = NormalizeDouble(newSL, _Digits);
       request.tp = PositionGetDouble(POSITION_TP); // Keep existing TP
@@ -666,7 +663,7 @@ void ManageTrailingStop()
          {
             Print("Failed to update trailing stop. Error: ", result.retcode);
          }
-       }
+      }
    }
 }
 
@@ -679,6 +676,7 @@ void ManageBreakeven()
       return;
    
    // Get position details
+   ulong positionTicket = PositionGetInteger(POSITION_TICKET);
    double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
    double currentSL = PositionGetDouble(POSITION_SL);
    long positionType = PositionGetInteger(POSITION_TYPE);
@@ -730,6 +728,7 @@ void ManageBreakeven()
       MqlTradeResult result = {};
       
       request.action = TRADE_ACTION_SLTP;
+      request.position = positionTicket;
       request.symbol = _Symbol;
       request.sl = NormalizeDouble(breakevenSL, _Digits);
       request.tp = PositionGetDouble(POSITION_TP); // Keep existing TP
