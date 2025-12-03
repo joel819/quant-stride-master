@@ -71,32 +71,34 @@ export const CodeGeneratorStep = ({ config }: Props) => {
   };
 
   const generateSessionCheck = () => {
-    if (config.sessions.length === 0) return "   return true; // No session filter";
+    if (config.sessions.length === 0) return "   return true; // No session filter - trade 24/7";
     
     const sessionChecks = config.sessions.map((s) => {
       switch (s) {
         case "london":
-          return "   if(hour >= 8 && hour < 16) return true; // London session";
+          return "      if(hour >= 8 && hour < 16) { Print(\"Session OK: London\"); return true; }";
         case "newyork":
-          return "   if(hour >= 13 && hour < 21) return true; // New York session";
+          return "      if(hour >= 13 && hour < 21) { Print(\"Session OK: New York\"); return true; }";
         case "overlap":
-          return "   if(hour >= 13 && hour < 16) return true; // London-NY overlap";
+          return "      if(hour >= 13 && hour < 16) { Print(\"Session OK: London-NY Overlap\"); return true; }";
         case "asian":
-          return "   if(hour >= 0 && hour < 8) return true; // Asian session";
+          return "      if(hour >= 0 && hour < 8) { Print(\"Session OK: Asian\"); return true; }";
         default:
           return "";
       }
     }).filter(Boolean).join("\n");
     
-    return `${sessionChecks}
+    return `   // Check configured sessions
+${sessionChecks}
    
-   Print("Session filter: Current hour ", hour, " does not match configured sessions");
+   // No matching session found
    return false;`;
   };
 
   const generateEntryLogic = () => {
     if (config.entries.length === 0) {
-      return `   // No entry conditions configured
+      return `   // No entry conditions configured - using simple price action
+   Print("WARNING: No entry conditions configured");
    return false;`;
     }
 
@@ -112,137 +114,296 @@ export const CodeGeneratorStep = ({ config }: Props) => {
         case "SMA":
           indicatorArrays.push(`   double ${ind.id}_val[];`);
           indicatorArrays.push(`   ArraySetAsSeries(${ind.id}_val, true);`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, ${ind.id}_val) < 3) return false;`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, ${ind.id}_val) < 3) { Print("Failed to copy ${ind.type} buffer"); return false; }`);
           break;
         case "RSI":
           indicatorArrays.push(`   double rsi_val[];`);
           indicatorArrays.push(`   ArraySetAsSeries(rsi_val, true);`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, rsi_val) < 3) return false;`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, rsi_val) < 3) { Print("Failed to copy RSI buffer"); return false; }`);
           break;
         case "BB":
           indicatorArrays.push(`   double bb_upper[], bb_middle[], bb_lower[];`);
           indicatorArrays.push(`   ArraySetAsSeries(bb_upper, true);`);
           indicatorArrays.push(`   ArraySetAsSeries(bb_middle, true);`);
           indicatorArrays.push(`   ArraySetAsSeries(bb_lower, true);`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, bb_upper) < 3) return false;  // Upper band`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 1, 0, 3, bb_middle) < 3) return false; // Middle band`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 2, 0, 3, bb_lower) < 3) return false;  // Lower band`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 1, 0, 3, bb_upper) < 3) { Print("Failed to copy BB upper"); return false; }`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, bb_middle) < 3) { Print("Failed to copy BB middle"); return false; }`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 2, 0, 3, bb_lower) < 3) { Print("Failed to copy BB lower"); return false; }`);
           break;
         case "MACD":
           indicatorArrays.push(`   double macd_main[], macd_signal[];`);
           indicatorArrays.push(`   ArraySetAsSeries(macd_main, true);`);
           indicatorArrays.push(`   ArraySetAsSeries(macd_signal, true);`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, macd_main) < 3) return false;`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 1, 0, 3, macd_signal) < 3) return false;`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, macd_main) < 3) { Print("Failed to copy MACD main"); return false; }`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 1, 0, 3, macd_signal) < 3) { Print("Failed to copy MACD signal"); return false; }`);
           break;
         case "ATR":
           indicatorArrays.push(`   double atr_val[];`);
           indicatorArrays.push(`   ArraySetAsSeries(atr_val, true);`);
-          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, atr_val) < 3) return false;`);
+          indicatorCopies.push(`   if(CopyBuffer(${handleName}, 0, 0, 3, atr_val) < 3) { Print("Failed to copy ATR buffer"); return false; }`);
           break;
       }
     });
 
     // Get current price data
-    const priceData = `   double close[];
+    const priceData = `   // Get price data
+   double close[], open[], high[], low[];
    ArraySetAsSeries(close, true);
-   if(CopyClose(_Symbol, ${getTimeframePeriod()}, 0, 3, close) < 3) return false;`;
+   ArraySetAsSeries(open, true);
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+   if(CopyClose(_Symbol, ${getTimeframePeriod()}, 0, 5, close) < 5) { Print("Failed to copy close prices"); return false; }
+   if(CopyOpen(_Symbol, ${getTimeframePeriod()}, 0, 5, open) < 5) { Print("Failed to copy open prices"); return false; }
+   if(CopyHigh(_Symbol, ${getTimeframePeriod()}, 0, 5, high) < 5) { Print("Failed to copy high prices"); return false; }
+   if(CopyLow(_Symbol, ${getTimeframePeriod()}, 0, 5, low) < 5) { Print("Failed to copy low prices"); return false; }
+   
+   // Candle analysis
+   bool isBullishCandle = close[1] > open[1];
+   bool isBearishCandle = close[1] < open[1];
+   double candleBody = MathAbs(close[1] - open[1]);
+   double candleRange = high[1] - low[1];`;
 
     // Generate actual entry conditions based on strategy type
     let entryConditions = "";
     
-    // Check if this is a BB + EMA strategy (like Volatility Breakout)
+    // Check which indicators are available
     const hasBB = config.indicators.some(ind => ind.type === "BB");
     const hasEMA = config.indicators.some(ind => ind.type === "EMA");
     const hasRSI = config.indicators.some(ind => ind.type === "RSI");
+    const hasMACD = config.indicators.some(ind => ind.type === "MACD");
     
     if (hasBB && hasEMA) {
-      // Volatility breakout or BB squeeze strategy
       const emaInd = config.indicators.find(ind => ind.type === "EMA");
       entryConditions = `   
-   // Volatility Breakout Strategy
-   Print("Checking BB+EMA: Close=", close[0], " EMA=", ${emaInd?.id}_val[0], " BB_U=", bb_upper[0], " BB_L=", bb_lower[0]);
+   // ===== BB + EMA Strategy =====
+   Print("Entry Check | Close[1]=", close[1], " | EMA=", ${emaInd?.id}_val[1], " | BB_U=", bb_upper[1], " | BB_L=", bb_lower[1]);
    
-   // LONG Signal 1: Price breaks above lower BB with bullish EMA trend
-   if(close[0] > ${emaInd?.id}_val[0] && close[0] > bb_lower[0] && close[1] <= bb_lower[1])
+   // Calculate BB width for volatility filter
+   double bbWidth = (bb_upper[1] - bb_lower[1]) / bb_middle[1] * 100;
+   Print("BB Width: ", DoubleToString(bbWidth, 2), "%");
+   
+   // === LONG CONDITIONS ===
+   // Price touched/crossed below lower BB and closed back above it (bounce)
+   bool longCond1 = (low[1] <= bb_lower[1] && close[1] > bb_lower[1]);
+   // Price is above EMA (trend filter)
+   bool longCond2 = (close[1] > ${emaInd?.id}_val[1]);
+   // Bullish candle confirmation
+   bool longCond3 = isBullishCandle;
+   
+   Print("LONG Check: Touch BB=", longCond1, " | Above EMA=", longCond2, " | Bullish=", longCond3);
+   
+   if(longCond1 && longCond2 && longCond3)
    {
-      Print("*** LONG SIGNAL: Breakout above lower BB with EMA support ***");
+      Print("***** LONG SIGNAL TRIGGERED *****");
       lastSignal = 1;
       return true;
    }
    
-   // LONG Signal 2: Price bounces from lower BB zone in uptrend
-   if(close[1] <= bb_lower[1] && close[0] > bb_lower[0] && close[0] > ${emaInd?.id}_val[0])
+   // Simpler alternative: just price above EMA with strong bullish candle
+   if(close[1] > ${emaInd?.id}_val[1] && isBullishCandle && candleBody > candleRange * 0.5)
    {
-      Print("*** LONG SIGNAL: Bounce from lower BB zone (uptrend) ***");
+      Print("***** LONG SIGNAL: Strong bullish above EMA *****");
       lastSignal = 1;
       return true;
    }
    
-   // SHORT Signal 1: Price breaks below upper BB with bearish EMA trend
-   if(close[0] < ${emaInd?.id}_val[0] && close[0] < bb_upper[0] && close[1] >= bb_upper[1])
+   // === SHORT CONDITIONS ===
+   // Price touched/crossed above upper BB and closed back below it (rejection)
+   bool shortCond1 = (high[1] >= bb_upper[1] && close[1] < bb_upper[1]);
+   // Price is below EMA (trend filter)
+   bool shortCond2 = (close[1] < ${emaInd?.id}_val[1]);
+   // Bearish candle confirmation
+   bool shortCond3 = isBearishCandle;
+   
+   Print("SHORT Check: Touch BB=", shortCond1, " | Below EMA=", shortCond2, " | Bearish=", shortCond3);
+   
+   if(shortCond1 && shortCond2 && shortCond3)
    {
-      Print("*** SHORT SIGNAL: Breakout below upper BB with EMA resistance ***");
+      Print("***** SHORT SIGNAL TRIGGERED *****");
       lastSignal = -1;
       return true;
    }
    
-   // SHORT Signal 2: Price rejects from upper BB zone in downtrend
-   if(close[1] >= bb_upper[1] && close[0] < bb_upper[0] && close[0] < ${emaInd?.id}_val[0])
+   // Simpler alternative: price below EMA with strong bearish candle
+   if(close[1] < ${emaInd?.id}_val[1] && isBearishCandle && candleBody > candleRange * 0.5)
    {
-      Print("*** SHORT SIGNAL: Rejection from upper BB zone (downtrend) ***");
+      Print("***** SHORT SIGNAL: Strong bearish below EMA *****");
       lastSignal = -1;
       return true;
    }`;
     } else if (hasEMA && hasRSI) {
-      // EMA + RSI scalping or mean reversion
       const emaInd = config.indicators.find(ind => ind.type === "EMA");
       entryConditions = `   
-   // EMA + RSI Strategy
-   Print("Checking EMA+RSI: Close=", close[0], " EMA=", ${emaInd?.id}_val[0], " RSI=", rsi_val[0]);
+   // ===== EMA + RSI Strategy =====
+   Print("Entry Check | Close[1]=", close[1], " | EMA=", ${emaInd?.id}_val[1], " | RSI=", rsi_val[1]);
    
-   // Long: Price above EMA with RSI momentum
-   if(close[0] > ${emaInd?.id}_val[0] && rsi_val[0] > 50 && rsi_val[0] < 70 && close[1] < ${emaInd?.id}_val[1])
+   // === LONG CONDITIONS ===
+   // RSI oversold bounce
+   bool rsiOversold = rsi_val[2] < 30 && rsi_val[1] > 30;
+   // Price above EMA
+   bool aboveEMA = close[1] > ${emaInd?.id}_val[1];
+   // RSI momentum
+   bool rsiMomentum = rsi_val[1] > rsi_val[2];
+   
+   Print("LONG Check: RSI Oversold Bounce=", rsiOversold, " | Above EMA=", aboveEMA, " | RSI Up=", rsiMomentum);
+   
+   if(aboveEMA && rsiMomentum && isBullishCandle)
    {
-      Print("*** LONG SIGNAL: EMA pullback with bullish RSI ***");
+      Print("***** LONG SIGNAL: RSI momentum with EMA support *****");
       lastSignal = 1;
       return true;
    }
    
-   // Short: Price below EMA with RSI momentum
-   if(close[0] < ${emaInd?.id}_val[0] && rsi_val[0] < 50 && rsi_val[0] > 30 && close[1] > ${emaInd?.id}_val[1])
+   if(rsiOversold && isBullishCandle)
    {
-      Print("*** SHORT SIGNAL: EMA pullback with bearish RSI ***");
+      Print("***** LONG SIGNAL: RSI oversold bounce *****");
+      lastSignal = 1;
+      return true;
+   }
+   
+   // === SHORT CONDITIONS ===
+   // RSI overbought rejection
+   bool rsiOverbought = rsi_val[2] > 70 && rsi_val[1] < 70;
+   // Price below EMA
+   bool belowEMA = close[1] < ${emaInd?.id}_val[1];
+   // RSI falling
+   bool rsiFalling = rsi_val[1] < rsi_val[2];
+   
+   Print("SHORT Check: RSI Overbought=", rsiOverbought, " | Below EMA=", belowEMA, " | RSI Down=", rsiFalling);
+   
+   if(belowEMA && rsiFalling && isBearishCandle)
+   {
+      Print("***** SHORT SIGNAL: RSI momentum with EMA resistance *****");
+      lastSignal = -1;
+      return true;
+   }
+   
+   if(rsiOverbought && isBearishCandle)
+   {
+      Print("***** SHORT SIGNAL: RSI overbought rejection *****");
       lastSignal = -1;
       return true;
    }`;
-    } else if (config.indicators.some(ind => ind.type === "EMA" && ind.id.includes("fast"))) {
-      // EMA crossover strategy
-      entryConditions = `   
-   // EMA Crossover Strategy
-   Print("Checking EMA Cross: Fast=", ema_fast_val[0], " Slow=", ema_slow_val[0]);
+    } else if (hasEMA) {
+      const emaInds = config.indicators.filter(ind => ind.type === "EMA");
+      if (emaInds.length >= 2) {
+        entryConditions = `   
+   // ===== EMA Crossover Strategy =====
+   Print("Entry Check | EMA1=", ${emaInds[0].id}_val[1], " | EMA2=", ${emaInds[1].id}_val[1]);
    
-   // Long: Fast EMA crosses above Slow EMA
-   if(ema_fast_val[0] > ema_slow_val[0] && ema_fast_val[1] <= ema_slow_val[1])
+   // Determine fast and slow EMAs
+   double fastEMA_curr = ${emaInds[0].id}_val[1];
+   double fastEMA_prev = ${emaInds[0].id}_val[2];
+   double slowEMA_curr = ${emaInds[1].id}_val[1];
+   double slowEMA_prev = ${emaInds[1].id}_val[2];
+   
+   // === LONG: Fast crosses above Slow ===
+   if(fastEMA_prev <= slowEMA_prev && fastEMA_curr > slowEMA_curr)
    {
-      Print("*** LONG SIGNAL: Fast EMA crossed above Slow EMA ***");
+      Print("***** LONG SIGNAL: EMA Bullish Crossover *****");
       lastSignal = 1;
       return true;
    }
    
-   // Short: Fast EMA crosses below Slow EMA
-   if(ema_fast_val[0] < ema_slow_val[0] && ema_fast_val[1] >= ema_slow_val[1])
+   // === SHORT: Fast crosses below Slow ===
+   if(fastEMA_prev >= slowEMA_prev && fastEMA_curr < slowEMA_curr)
    {
-      Print("*** SHORT SIGNAL: Fast EMA crossed below Slow EMA ***");
+      Print("***** SHORT SIGNAL: EMA Bearish Crossover *****");
+      lastSignal = -1;
+      return true;
+   }
+   
+   // Alternative: Price action with single EMA
+   if(close[2] < ${emaInds[0].id}_val[2] && close[1] > ${emaInds[0].id}_val[1] && isBullishCandle)
+   {
+      Print("***** LONG SIGNAL: Price crossed above EMA *****");
+      lastSignal = 1;
+      return true;
+   }
+   
+   if(close[2] > ${emaInds[0].id}_val[2] && close[1] < ${emaInds[0].id}_val[1] && isBearishCandle)
+   {
+      Print("***** SHORT SIGNAL: Price crossed below EMA *****");
+      lastSignal = -1;
+      return true;
+   }`;
+      } else {
+        entryConditions = `   
+   // ===== Single EMA Strategy =====
+   Print("Entry Check | Close[1]=", close[1], " | EMA=", ${emaInds[0].id}_val[1]);
+   
+   // Price crosses above EMA with bullish candle
+   if(close[2] < ${emaInds[0].id}_val[2] && close[1] > ${emaInds[0].id}_val[1] && isBullishCandle)
+   {
+      Print("***** LONG SIGNAL: Price crossed above EMA *****");
+      lastSignal = 1;
+      return true;
+   }
+   
+   // Price crosses below EMA with bearish candle
+   if(close[2] > ${emaInds[0].id}_val[2] && close[1] < ${emaInds[0].id}_val[1] && isBearishCandle)
+   {
+      Print("***** SHORT SIGNAL: Price crossed below EMA *****");
+      lastSignal = -1;
+      return true;
+   }
+   
+   // Trend continuation: price pulls back to EMA
+   if(close[1] > ${emaInds[0].id}_val[1] && low[1] <= ${emaInds[0].id}_val[1] * 1.001 && isBullishCandle)
+   {
+      Print("***** LONG SIGNAL: Pullback to EMA support *****");
+      lastSignal = 1;
+      return true;
+   }
+   
+   if(close[1] < ${emaInds[0].id}_val[1] && high[1] >= ${emaInds[0].id}_val[1] * 0.999 && isBearishCandle)
+   {
+      Print("***** SHORT SIGNAL: Pullback to EMA resistance *****");
+      lastSignal = -1;
+      return true;
+   }`;
+      }
+    } else if (hasMACD) {
+      entryConditions = `   
+   // ===== MACD Strategy =====
+   Print("Entry Check | MACD Main=", macd_main[1], " | MACD Signal=", macd_signal[1]);
+   
+   // MACD crosses above signal line
+   if(macd_main[2] <= macd_signal[2] && macd_main[1] > macd_signal[1])
+   {
+      Print("***** LONG SIGNAL: MACD Bullish Crossover *****");
+      lastSignal = 1;
+      return true;
+   }
+   
+   // MACD crosses below signal line
+   if(macd_main[2] >= macd_signal[2] && macd_main[1] < macd_signal[1])
+   {
+      Print("***** SHORT SIGNAL: MACD Bearish Crossover *****");
       lastSignal = -1;
       return true;
    }`;
     } else {
-      // Generic fallback
+      // Price action fallback
       entryConditions = `   
-   // Entry conditions: ${config.entries.map(e => e.description).join(", ")}
-   Print("WARNING: No specific entry logic implemented for this indicator combination");
-   return false;`;
+   // ===== Price Action Fallback =====
+   Print("Entry Check | Using pure price action | Close=", close[1], " | Bullish=", isBullishCandle);
+   
+   // Strong bullish engulfing
+   if(isBullishCandle && candleBody > candleRange * 0.6 && close[1] > high[2])
+   {
+      Print("***** LONG SIGNAL: Bullish Engulfing *****");
+      lastSignal = 1;
+      return true;
+   }
+   
+   // Strong bearish engulfing
+   if(isBearishCandle && candleBody > candleRange * 0.6 && close[1] < low[2])
+   {
+      Print("***** SHORT SIGNAL: Bearish Engulfing *****");
+      lastSignal = -1;
+      return true;
+   }`;
     }
 
     return `${indicatorArrays.join("\n")}
@@ -252,6 +413,7 @@ ${priceData}
 ${indicatorCopies.join("\n")}
 ${entryConditions}
    
+   Print("No entry signal on this bar");
    return false;`;
   };
 
@@ -591,6 +753,9 @@ ${generateTakeProfitCalculation()}
    
    Print("Opening ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), " | Price: ", price, " | SL: ", slPrice, " | TP: ", tpPrice, " | Lot: ", lotSize);
    
+   // Get allowed filling mode for this symbol
+   ENUM_ORDER_TYPE_FILLING fillType = GetAllowedFillingMode();
+   
    // Prepare trade request
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
@@ -602,17 +767,20 @@ ${generateTakeProfitCalculation()}
    request.price = price;
    request.sl = slPrice;
    request.tp = tpPrice;
-   request.deviation = 10;
+   request.deviation = 30;  // Increased deviation for volatile markets
    request.magic = MagicNumber;
    request.comment = "Quantum Strategy";
-   request.type_filling = ORDER_FILLING_IOC;
+   request.type_filling = fillType;
+   
+   Print("Sending order with filling mode: ", EnumToString(fillType));
    
    // Send order
    if(OrderSend(request, result))
    {
       if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED)
       {
-         Print("Order placed successfully. Ticket: ", result.order);
+         Print("*** ORDER PLACED SUCCESSFULLY *** Ticket: ", result.order);
+         dailyTradeCount++;
       }
       else
       {
@@ -623,6 +791,22 @@ ${generateTakeProfitCalculation()}
    {
       Print("OrderSend failed. Error: ", GetLastError());
    }
+}
+
+//+------------------------------------------------------------------+
+//| Get allowed filling mode for this symbol                         |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING GetAllowedFillingMode()
+{
+   uint filling = (uint)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   
+   if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      return ORDER_FILLING_FOK;
+   
+   if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      return ORDER_FILLING_IOC;
+   
+   return ORDER_FILLING_RETURN;
 }
 
 //+------------------------------------------------------------------+
