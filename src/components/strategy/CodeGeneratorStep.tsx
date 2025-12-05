@@ -155,6 +155,29 @@ ${sessionChecks}
 #property description "Features: Multi-TF, News Filter, Money Mgmt, Multiple Entry Types"
 
 //+------------------------------------------------------------------+
+//|                         ENUMERATIONS                              |
+//+------------------------------------------------------------------+
+// NOTE: Enums MUST be declared before input parameters in MQL5
+enum ENUM_MM_TYPE
+{
+   MM_FIXED = 0,           // Fixed lot size
+   MM_MARTINGALE = 1,      // Martingale (double after loss)
+   MM_ANTI_MARTINGALE = 2, // Anti-Martingale (double after win)
+   MM_RECOVERY = 3         // Recovery (increase after loss streak)
+};
+
+enum ENUM_SIGNAL_TYPE
+{
+   SIGNAL_NONE = 0,
+   SIGNAL_SCALP_LONG = 1,
+   SIGNAL_SCALP_SHORT = -1,
+   SIGNAL_BREAKOUT_LONG = 2,
+   SIGNAL_BREAKOUT_SHORT = -2,
+   SIGNAL_REVERSAL_LONG = 3,
+   SIGNAL_REVERSAL_SHORT = -3
+};
+
+//+------------------------------------------------------------------+
 //|                         INPUT PARAMETERS                          |
 //+------------------------------------------------------------------+
 
@@ -206,28 +229,6 @@ input int MaxDailyTrades = 10;                                         // Max tr
 input group "=== General Settings ==="
 input int MagicNumber = 12345;                                         // Magic Number
 input bool EnableDebugMode = true;                                     // Enable detailed logging
-
-//+------------------------------------------------------------------+
-//|                         ENUMERATIONS                              |
-//+------------------------------------------------------------------+
-enum ENUM_MM_TYPE
-{
-   MM_FIXED = 0,           // Fixed lot size
-   MM_MARTINGALE = 1,      // Martingale (double after loss)
-   MM_ANTI_MARTINGALE = 2, // Anti-Martingale (double after win)
-   MM_RECOVERY = 3         // Recovery (increase after loss streak)
-};
-
-enum ENUM_SIGNAL_TYPE
-{
-   SIGNAL_NONE = 0,
-   SIGNAL_SCALP_LONG = 1,
-   SIGNAL_SCALP_SHORT = -1,
-   SIGNAL_BREAKOUT_LONG = 2,
-   SIGNAL_BREAKOUT_SHORT = -2,
-   SIGNAL_REVERSAL_LONG = 3,
-   SIGNAL_REVERSAL_SHORT = -3
-};
 
 //+------------------------------------------------------------------+
 //|                       INDICATOR HANDLES                           |
