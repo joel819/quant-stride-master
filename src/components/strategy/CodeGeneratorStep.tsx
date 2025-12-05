@@ -221,6 +221,12 @@ input bool UseTrailingStop = true;                                     // Enable
 input double TrailingStopDistance = 10.0;                              // Trailing Stop Distance (pips)
 input double TrailingStopActivation = 15.0;                            // Activate after profit (pips)
 
+input group "=== Partial Profit Taking ==="
+input bool UsePartialTP = true;                                        // Enable Partial Take Profit
+input double PartialTPPercent = 50.0;                                  // Close % at TP1 (0-100)
+input double PartialTPPips = 10.0;                                     // TP1 distance (pips)
+input bool MoveToBreakevenAfterPartial = true;                         // Move SL to BE after partial
+
 input group "=== Daily Limits ==="
 input int MaxDailyLoss = ${config.maxDailyLoss || 100};                // Max Daily Loss ($)
 input double DailyTarget = ${config.dailyTarget || 200.0};             // Daily Target ($)
@@ -264,6 +270,10 @@ bool isNewsTime = false;
 
 // HTF trend tracking
 int htfTrend = 0; // 1 = bullish, -1 = bearish, 0 = neutral
+
+// Partial profit tracking
+bool partialTPTaken = false;
+double originalPositionSize = 0.0;
 
 // Structure tracking for breakouts
 double recentHigh = 0.0;
@@ -336,6 +346,10 @@ void OnTick()
    // Manage open positions on EVERY tick
    if(HasOpenPosition())
    {
+      // Partial profit taking - check first
+      if(UsePartialTP && !partialTPTaken)
+         ManagePartialTP();
+      
       if(UseBreakeven && !breakevenApplied)
          ManageBreakeven();
       
@@ -349,6 +363,8 @@ void OnTick()
    else
    {
       breakevenApplied = false;
+      partialTPTaken = false;
+      originalPositionSize = 0.0;
       gridLevel = 0;
    }
    
@@ -808,6 +824,10 @@ void OpenTrade(ENUM_SIGNAL_TYPE signal)
          dailyTradeCount++;
          lastLotSize = lotSize;
          
+         // Track original position size for partial TP
+         originalPositionSize = lotSize;
+         partialTPTaken = false;
+         
          // Grid base setup
          if(UseGridTrading)
          {
@@ -1201,9 +1221,121 @@ void ManageBreakeven()
          if(result.retcode == TRADE_RETCODE_DONE)
          {
             breakevenApplied = true;
-            Print("*** BREAKEVEN APPLIED *** SL = ", breakevenSL);
+             Print("*** BREAKEVEN APPLIED *** SL = ", breakevenSL);
          }
       }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Manage partial profit taking                                     |
+//+------------------------------------------------------------------+
+void ManagePartialTP()
+{
+   if(!SelectOurPosition())
+      return;
+   
+   ulong positionTicket = PositionGetInteger(POSITION_TICKET);
+   double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double currentVolume = PositionGetDouble(POSITION_VOLUME);
+   long positionType = PositionGetInteger(POSITION_TYPE);
+   
+   double currentPrice = (positionType == POSITION_TYPE_BUY) ? 
+                         SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                         SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   double pipValue = _Point * pipMultiplier;
+   double profitPips = 0.0;
+   
+   if(positionType == POSITION_TYPE_BUY)
+      profitPips = (currentPrice - positionOpenPrice) / pipValue;
+   else
+      profitPips = (positionOpenPrice - currentPrice) / pipValue;
+   
+   // Check if reached partial TP level
+   if(profitPips < PartialTPPips)
+      return;
+   
+   // Calculate volume to close (percentage of original or current)
+   double volumeToClose = currentVolume * (PartialTPPercent / 100.0);
+   
+   // Normalize volume
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   volumeToClose = MathFloor(volumeToClose / lotStep) * lotStep;
+   volumeToClose = MathMax(minLot, volumeToClose);
+   
+   // Ensure we don't close more than current volume
+   if(volumeToClose >= currentVolume)
+   {
+      Print("Partial TP: Volume to close >= current volume, skipping partial close");
+      partialTPTaken = true;
+      return;
+   }
+   
+   // Partial close order
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = _Symbol;
+   request.volume = volumeToClose;
+   request.type = (positionType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   request.price = currentPrice;
+   request.deviation = 30;
+   request.position = positionTicket;
+   request.magic = MagicNumber;
+   request.comment = "QSB_PARTIAL_TP";
+   request.type_filling = GetAllowedFillingMode();
+   
+   if(OrderSend(request, result))
+   {
+      if(result.retcode == TRADE_RETCODE_DONE)
+      {
+         partialTPTaken = true;
+         Print("*** PARTIAL TP TAKEN *** Closed: ", volumeToClose, " lots at ", DoubleToString(profitPips, 1), " pips profit");
+         Print("Remaining position: ", currentVolume - volumeToClose, " lots");
+         
+         // Move to breakeven after partial close if enabled
+         if(MoveToBreakevenAfterPartial)
+         {
+            double bufferDistance = BreakevenBuffer * pipValue;
+            double breakevenSL = 0.0;
+            
+            if(positionType == POSITION_TYPE_BUY)
+               breakevenSL = positionOpenPrice + bufferDistance;
+            else
+               breakevenSL = positionOpenPrice - bufferDistance;
+            
+            breakevenSL = NormalizeDouble(breakevenSL, _Digits);
+            
+            MqlTradeRequest slRequest = {};
+            MqlTradeResult slResult = {};
+            
+            slRequest.action = TRADE_ACTION_SLTP;
+            slRequest.position = positionTicket;
+            slRequest.symbol = _Symbol;
+            slRequest.sl = breakevenSL;
+            slRequest.tp = 0.0; // Remove TP, let trailing stop handle it
+            
+            if(OrderSend(slRequest, slResult))
+            {
+               if(slResult.retcode == TRADE_RETCODE_DONE)
+               {
+                  breakevenApplied = true;
+                  Print("*** SL moved to breakeven after partial TP *** SL = ", breakevenSL);
+               }
+            }
+         }
+      }
+      else
+      {
+         Print("Partial TP failed. Error: ", result.retcode, " - ", GetRetcodeDescription(result.retcode));
+      }
+   }
+   else
+   {
+      Print("Partial TP OrderSend failed. Error: ", GetLastError());
    }
 }
 
@@ -1302,7 +1434,7 @@ void DrawDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, xOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, yOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 260);
-      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 230);
+      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 250);
       ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, C'15,15,25');
       ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bgName, OBJPROP_COLOR, clrDodgerBlue);
@@ -1347,6 +1479,11 @@ void DrawDashboard()
    
    color tsColor = (trailingStatus == "ACTIVE") ? clrLime : clrYellow;
    CreateLabel(prefix + "Trail", xOffset, yOffset + lineHeight * line++, "Trailing: " + trailingStatus, tsColor, fontSize);
+   
+   // Partial TP status
+   string partialStatus = UsePartialTP ? (partialTPTaken ? "TAKEN" : "WAITING") : "OFF";
+   color partialColor = partialTPTaken ? clrLime : (UsePartialTP ? clrYellow : clrGray);
+   CreateLabel(prefix + "Partial", xOffset, yOffset + lineHeight * line++, "Partial TP: " + partialStatus, partialColor, fontSize);
    
    // Position
    if(SelectOurPosition())
