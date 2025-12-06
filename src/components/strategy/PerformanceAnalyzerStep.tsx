@@ -91,38 +91,55 @@ export const PerformanceAnalyzerStep = ({ config }: Props) => {
     };
   }, [config, customWinRate, tradesPerDay, riskFreeRate]);
 
+  const [simResults, setSimResults] = useState<{
+    median: number;
+    best: number;
+    worst: number;
+    profitable: number;
+  } | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+
   const runMonteCarloSimulation = () => {
-    const results: number[] = [];
+    setIsSimulating(true);
     
-    for (let sim = 0; sim < simulationRuns; sim++) {
-      let balance = config.accountSize;
+    // Use setTimeout to allow UI to update before heavy computation
+    setTimeout(() => {
+      const results: number[] = [];
+      const winRate = customWinRate / 100;
+      const rrRatio = config.takeProfit.ratio || 2;
+      const stopLossPips = config.stopLoss.pips || 10;
+      const avgWin = stopLossPips * rrRatio;
+      const avgLoss = stopLossPips;
       
-      for (let trade = 0; trade < tradesPerDay * 20; trade++) {
-        const isWin = Math.random() < metrics.winRate;
-        const pipsGained = isWin ? metrics.avgWin : -metrics.avgLoss;
-        const dollarValue = (pipsGained / 10) * (balance * config.positionSizePercent / 100);
-        balance += dollarValue;
+      for (let sim = 0; sim < simulationRuns; sim++) {
+        let balance = config.accountSize;
         
-        if (balance <= config.accountSize * 0.5) break; // 50% drawdown stop
+        for (let trade = 0; trade < tradesPerDay * 20; trade++) {
+          const isWin = Math.random() < winRate;
+          const pipsGained = isWin ? avgWin : -avgLoss;
+          const dollarValue = (pipsGained / 10) * (balance * config.positionSizePercent / 100);
+          balance += dollarValue;
+          
+          if (balance <= config.accountSize * 0.5) break; // 50% drawdown stop
+        }
+        
+        results.push(balance);
       }
       
-      results.push(balance);
-    }
-    
-    const sortedResults = results.sort((a, b) => a - b);
-    const median = sortedResults[Math.floor(sortedResults.length / 2)];
-    const percentile95 = sortedResults[Math.floor(sortedResults.length * 0.95)];
-    const percentile5 = sortedResults[Math.floor(sortedResults.length * 0.05)];
-    
-    return {
-      median: median - config.accountSize,
-      best: percentile95 - config.accountSize,
-      worst: percentile5 - config.accountSize,
-      profitable: results.filter(r => r > config.accountSize).length / results.length * 100,
-    };
+      const sortedResults = results.sort((a, b) => a - b);
+      const median = sortedResults[Math.floor(sortedResults.length / 2)];
+      const percentile95 = sortedResults[Math.floor(sortedResults.length * 0.95)];
+      const percentile5 = sortedResults[Math.floor(sortedResults.length * 0.05)];
+      
+      setSimResults({
+        median: median - config.accountSize,
+        best: percentile95 - config.accountSize,
+        worst: percentile5 - config.accountSize,
+        profitable: results.filter(r => r > config.accountSize).length / results.length * 100,
+      });
+      setIsSimulating(false);
+    }, 50);
   };
-
-  const [simResults, setSimResults] = useState(runMonteCarloSimulation());
 
   const getMetricColor = (value: number, threshold: { good: number; bad: number }) => {
     if (value >= threshold.good) return "text-success";
@@ -213,10 +230,11 @@ export const PerformanceAnalyzerStep = ({ config }: Props) => {
         </div>
         
         <Button 
-          onClick={() => setSimResults(runMonteCarloSimulation())}
+          onClick={runMonteCarloSimulation}
           className="mt-4 w-full profit-glow"
+          disabled={isSimulating}
         >
-          Run Simulation
+          {isSimulating ? "Running..." : "Run Simulation"}
         </Button>
       </Card>
 
@@ -358,39 +376,47 @@ export const PerformanceAnalyzerStep = ({ config }: Props) => {
           <h4 className="font-semibold">Monte Carlo Simulation Results</h4>
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="text-center p-4 bg-background/50 rounded-lg">
-            <div className="text-2xl font-bold font-mono text-primary">
-              {simResults.profitable.toFixed(1)}%
+        {simResults ? (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center p-4 bg-background/50 rounded-lg">
+                <div className="text-2xl font-bold font-mono text-primary">
+                  {simResults.profitable.toFixed(1)}%
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">Profitable Months</div>
+              </div>
+              
+              <div className="text-center p-4 bg-background/50 rounded-lg">
+                <div className={`text-2xl font-bold font-mono ${simResults.median > 0 ? 'text-success' : 'text-destructive'}`}>
+                  ${simResults.median.toFixed(2)}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">Median Outcome</div>
+              </div>
+              
+              <div className="text-center p-4 bg-background/50 rounded-lg">
+                <div className="text-2xl font-bold font-mono text-success">
+                  ${simResults.best.toFixed(2)}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">95th Percentile</div>
+              </div>
+              
+              <div className="text-center p-4 bg-background/50 rounded-lg">
+                <div className="text-2xl font-bold font-mono text-destructive">
+                  ${simResults.worst.toFixed(2)}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">5th Percentile</div>
+              </div>
             </div>
-            <div className="text-xs text-muted-foreground mt-1">Profitable Months</div>
+            
+            <p className="text-xs text-muted-foreground mt-4 text-center">
+              Simulation ran {simulationRuns.toLocaleString()} iterations over a 20-day trading period
+            </p>
+          </>
+        ) : (
+          <div className="text-center py-8 text-muted-foreground">
+            <p>Click "Run Simulation" to see Monte Carlo results</p>
           </div>
-          
-          <div className="text-center p-4 bg-background/50 rounded-lg">
-            <div className={`text-2xl font-bold font-mono ${simResults.median > 0 ? 'text-success' : 'text-destructive'}`}>
-              ${simResults.median.toFixed(2)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">Median Outcome</div>
-          </div>
-          
-          <div className="text-center p-4 bg-background/50 rounded-lg">
-            <div className="text-2xl font-bold font-mono text-success">
-              ${simResults.best.toFixed(2)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">95th Percentile</div>
-          </div>
-          
-          <div className="text-center p-4 bg-background/50 rounded-lg">
-            <div className="text-2xl font-bold font-mono text-destructive">
-              ${simResults.worst.toFixed(2)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">5th Percentile</div>
-          </div>
-        </div>
-        
-        <p className="text-xs text-muted-foreground mt-4 text-center">
-          Simulation ran {simulationRuns.toLocaleString()} iterations over a 20-day trading period
-        </p>
+        )}
       </Card>
 
       <Card className="p-6 bg-accent/10 border-accent/30">
