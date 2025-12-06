@@ -323,27 +323,51 @@ int OnInit()
                         StringFind(symbolName, "UK100") >= 0 ||
                         StringFind(symbolName, "JP225") >= 0);
    
+   // Get minimum stop level from broker FIRST
+   long minStopPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double minStopLevel = minStopPoints * _Point;
+   double spread = SymbolInfoDouble(_Symbol, SYMBOL_SPREAD) * _Point;
+   
+   Print("=== STOP LEVEL ANALYSIS ===");
+   Print("Symbol: ", _Symbol, " | Digits: ", digits);
+   Print("Min stop level (points): ", minStopPoints, " | Min stop level (price): ", minStopLevel);
+   Print("Current spread: ", spread);
+   
    if(isSynthetic)
    {
-      // Synthetic indices: 1 pip = 1.0 point typically, but need larger values
-      // For Volatility 75, minimum stop is usually 100+ points
-      pipMultiplier = 100.0;  // Use larger multiplier for synthetics
-      Print("Detected SYNTHETIC INDEX - using pipMultiplier: ", pipMultiplier);
+      // Synthetic indices need MUCH larger pip multipliers
+      // V75 typically needs 200-500+ point stops minimum
+      pipMultiplier = 1.0;  // Start with 1:1 for synthetics (1 pip = 1 point)
+      
+      // Calculate required pip multiplier based on broker's minimum stop level
+      if(minStopPoints > 0)
+      {
+         // Ensure our SL pips * multiplier >= minStopPoints * 2 (safety buffer)
+         double requiredMultiplier = (minStopPoints * 2.5) / StopLossPips;
+         if(requiredMultiplier > pipMultiplier)
+         {
+            pipMultiplier = MathCeil(requiredMultiplier);
+         }
+      }
+      else
+      {
+         // No min stop reported, use safe default for synthetics
+         pipMultiplier = 1.0;  // 1 pip = 1 point, rely on larger StopLossPips value
+      }
+      
+      Print("Detected SYNTHETIC INDEX - pipMultiplier: ", pipMultiplier);
    }
    else if(isStockIndex)
    {
-      // Stock indices: 1 pip = 1.0 or 0.1 point depending on broker
       pipMultiplier = 1.0;
       Print("Detected STOCK INDEX - using pipMultiplier: ", pipMultiplier);
    }
    else if(digits == 3 || digits == 5)
    {
-      // Forex 5-digit or JPY 3-digit pairs
       pipMultiplier = 10.0;
    }
    else if(digits == 2)
    {
-      // JPY pairs with 2 digits
       pipMultiplier = 1.0;
    }
    else
@@ -351,22 +375,23 @@ int OnInit()
       pipMultiplier = 1.0;
    }
    
-   // Validate against minimum stop level
-   double minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+   // CRITICAL: Final validation - ensure stop distance exceeds broker minimum
    double testDistance = StopLossPips * _Point * pipMultiplier;
+   double safeMinStop = minStopLevel + spread * 3; // Add spread buffer
    
-   if(testDistance < minStopLevel && minStopLevel > 0)
+   if(testDistance < safeMinStop && safeMinStop > 0)
    {
-      // Adjust pipMultiplier to ensure stops are valid
-      double requiredMultiplier = (minStopLevel / (_Point * StopLossPips)) * 1.5; // 50% buffer
+      double requiredMultiplier = (safeMinStop / (_Point * StopLossPips)) * 2.0; // Double buffer
       if(requiredMultiplier > pipMultiplier)
       {
          pipMultiplier = MathCeil(requiredMultiplier);
-         Print("Adjusted pipMultiplier to meet minimum stop level: ", pipMultiplier);
+         Print("*** ADJUSTED pipMultiplier for safe stops: ", pipMultiplier);
       }
    }
    
-   Print("Symbol: ", _Symbol, " | Digits: ", digits, " | Pip multiplier: ", pipMultiplier, " | Min stop level: ", minStopLevel);
+   Print("Final pip multiplier: ", pipMultiplier);
+   Print("Test SL distance: ", testDistance, " | Safe min: ", safeMinStop);
+   Print("=== END STOP LEVEL ANALYSIS ===");
    
    // Initialize indicators
 ${generateIndicatorInit()}
@@ -853,12 +878,43 @@ void OpenTrade(ENUM_SIGNAL_TYPE signal)
    double slPrice = isLong ? price - slDistance : price + slDistance;
    double tpPrice = isLong ? price + tpDistance : price - tpDistance;
    
+   // CRITICAL: Validate stops against broker minimum BEFORE sending order
+   long minStopPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double minStopDistance = minStopPoints * _Point;
+   double spread = SymbolInfoDouble(_Symbol, SYMBOL_SPREAD) * _Point;
+   double safeMinDistance = minStopDistance + spread * 3;
+   
+   // Check and adjust SL distance if too close
+   double actualSLDistance = MathAbs(price - slPrice);
+   if(actualSLDistance < safeMinDistance && safeMinDistance > 0)
+   {
+      Print("WARNING: SL too close! Current: ", actualSLDistance, " | Min required: ", safeMinDistance);
+      // Increase SL distance to safe minimum
+      slDistance = safeMinDistance * 1.5;
+      slPrice = isLong ? price - slDistance : price + slDistance;
+      // Recalculate TP to maintain RR
+      tpDistance = slDistance * TakeProfitRatio;
+      tpPrice = isLong ? price + tpDistance : price - tpDistance;
+      Print("ADJUSTED: New SL distance: ", slDistance, " | New TP distance: ", tpDistance);
+   }
+   
+   // Check and adjust TP distance if too close
+   double actualTPDistance = MathAbs(price - tpPrice);
+   if(actualTPDistance < safeMinDistance && safeMinDistance > 0)
+   {
+      Print("WARNING: TP too close! Current: ", actualTPDistance, " | Min required: ", safeMinDistance);
+      tpDistance = safeMinDistance * 2;
+      tpPrice = isLong ? price + tpDistance : price - tpDistance;
+      Print("ADJUSTED: New TP distance: ", tpDistance);
+   }
+   
    // Normalize prices
    slPrice = NormalizeDouble(slPrice, _Digits);
    tpPrice = NormalizeDouble(tpPrice, _Digits);
    
    Print("Opening ", (isLong ? "BUY" : "SELL"), " | Signal: ", EnumToString(signal));
-   Print("Price: ", price, " | SL: ", slPrice, " (", DoubleToString(stopLossPips, 1), " pips) | TP: ", tpPrice, " | Lot: ", lotSize);
+   Print("Price: ", price, " | SL: ", slPrice, " (dist: ", MathAbs(price - slPrice), ") | TP: ", tpPrice, " | Lot: ", lotSize);
+   Print("Min stop level: ", minStopDistance, " | Safe min: ", safeMinDistance, " | Spread: ", spread);
    
    // Get filling mode
    ENUM_ORDER_TYPE_FILLING fillType = GetAllowedFillingMode();

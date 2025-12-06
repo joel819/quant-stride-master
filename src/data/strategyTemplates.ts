@@ -339,8 +339,8 @@ export const strategyTemplates: StrategyTemplate[] = [
           logic: "Breakeven at 50 pips, trail at 40 pips distance after 80 pips profit"
         }
       ],
-      stopLoss: { type: "fixed", pips: 80 },
-      takeProfit: { type: "rr", ratio: 2 },
+      stopLoss: { type: "fixed", pips: 200 },
+      takeProfit: { type: "rr", ratio: 1.5 },
       maxDailyLoss: 15,
       positionSizePercent: 0.5,
     }
