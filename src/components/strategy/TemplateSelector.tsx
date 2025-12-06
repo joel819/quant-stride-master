@@ -30,9 +30,14 @@ const categoryColors = {
   "Scalping": "bg-green-500/20 text-green-400 border-green-500/30",
 };
 
-interface UserTemplate extends StrategyTemplate {
+interface UserTemplate {
   id: string;
+  name: string;
+  description: string;
+  category: "Trend Following" | "Mean Reversion" | "Breakout" | "Scalping";
+  config: StrategyConfig;
   created_at: string;
+  recommendedPairs?: string;
 }
 
 export const TemplateSelector = ({ onSelectTemplate }: Props) => {
@@ -62,9 +67,10 @@ export const TemplateSelector = ({ onSelectTemplate }: Props) => {
         id: t.id,
         name: t.name,
         description: t.description || '',
-        category: t.category as any,
+        category: t.category as UserTemplate['category'],
         config: t.config as unknown as StrategyConfig,
         created_at: t.created_at,
+        recommendedPairs: (t.config as any)?.instruments?.join(', ') || '',
       })));
     }
   };
@@ -84,7 +90,7 @@ export const TemplateSelector = ({ onSelectTemplate }: Props) => {
     }
   };
 
-  const handleLoadTemplate = (template: StrategyTemplate) => {
+  const handleLoadTemplate = (template: StrategyTemplate | UserTemplate) => {
     onSelectTemplate(template.config);
     toast.success(`Loaded: ${template.name}`, {
       description: "Template configuration applied successfully",
@@ -93,8 +99,9 @@ export const TemplateSelector = ({ onSelectTemplate }: Props) => {
 
   const categories = Array.from(new Set(strategyTemplates.map(t => t.category)));
 
-  const renderTemplateCard = (template: StrategyTemplate, isUserTemplate = false, templateId?: string) => {
+  const renderTemplateCard = (template: StrategyTemplate | UserTemplate, isUserTemplate = false, templateId?: string) => {
     const Icon = categoryIcons[template.category];
+    const recommendedPairs = 'recommendedPairs' in template ? template.recommendedPairs : undefined;
     
     return (
       <Card
@@ -117,9 +124,16 @@ export const TemplateSelector = ({ onSelectTemplate }: Props) => {
           </div>
         </div>
 
-        <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
+        <p className="text-sm text-muted-foreground mb-3 leading-relaxed">
           {template.description}
         </p>
+
+        {recommendedPairs && (
+          <div className="mb-3 p-2 bg-primary/10 rounded-md border border-primary/20">
+            <div className="text-xs text-muted-foreground mb-1">Recommended Pairs</div>
+            <div className="text-sm font-medium text-primary">{recommendedPairs}</div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2 mb-4 text-xs">
           <div className="bg-background/50 rounded p-2">

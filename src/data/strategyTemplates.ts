@@ -5,6 +5,7 @@ export interface StrategyTemplate {
   name: string;
   description: string;
   category: "Trend Following" | "Mean Reversion" | "Breakout" | "Scalping";
+  recommendedPairs: string; // Display text for recommended pairs
   config: StrategyConfig;
 }
 
@@ -14,8 +15,9 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "EMA Crossover",
     description: "Fast EMA crosses above/below slow EMA for trend entries. Classic trend-following strategy with high win rate in trending markets.",
     category: "Trend Following",
+    recommendedPairs: "EURUSD, GBPUSD, USDJPY",
     config: {
-      instruments: ["EURUSD", "GBPUSD"],
+      instruments: ["EURUSD", "GBPUSD", "USDJPY"],
       timeframe: "5m",
       accountSize: 100,
       dailyTarget: 150,
@@ -73,6 +75,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "RSI Mean Reversion",
     description: "Buy oversold conditions (RSI < 30), sell overbought (RSI > 70). Works best in ranging markets with clear support/resistance.",
     category: "Mean Reversion",
+    recommendedPairs: "EURUSD, GBPUSD, VOL75",
     config: {
       instruments: ["EURUSD", "GBPUSD", "VOL75"],
       timeframe: "1m",
@@ -88,10 +91,10 @@ export const strategyTemplates: StrategyTemplate[] = [
           condition: "Oversold/Overbought levels"
         },
         {
-          id: "ema_200",
-          name: "EMA 200",
+          id: "ema_50",
+          name: "EMA 50",
           type: "EMA",
-          params: { period: 200 },
+          params: { period: 50 },
           condition: "Trend filter"
         }
       ],
@@ -99,12 +102,12 @@ export const strategyTemplates: StrategyTemplate[] = [
         {
           id: "long_oversold",
           description: "Buy when RSI crosses above 30 (oversold bounce)",
-          logic: "RSI[0] > 30 && RSI[1] <= 30 && Close > EMA200"
+          logic: "RSI[0] > 30 && RSI[1] <= 30"
         },
         {
           id: "short_overbought",
           description: "Sell when RSI crosses below 70 (overbought rejection)",
-          logic: "RSI[0] < 70 && RSI[1] >= 70 && Close < EMA200"
+          logic: "RSI[0] < 70 && RSI[1] >= 70"
         }
       ],
       exits: [
@@ -125,8 +128,9 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Bollinger Band Squeeze",
     description: "Breakout strategy that trades when volatility contracts and then expands. High probability trades after consolidation periods.",
     category: "Breakout",
+    recommendedPairs: "NAS100, EURUSD, GBPUSD",
     config: {
-      instruments: ["NAS100", "BOOM1000", "CRASH1000"],
+      instruments: ["NAS100", "EURUSD", "GBPUSD"],
       timeframe: "5m",
       accountSize: 100,
       dailyTarget: 200,
@@ -150,20 +154,20 @@ export const strategyTemplates: StrategyTemplate[] = [
       entries: [
         {
           id: "long_breakout",
-          description: "Buy when price breaks above upper band after squeeze",
-          logic: "Close > UpperBand && ATR[0] > ATR[10] && BandWidth < AvgBandWidth"
+          description: "Buy when price breaks above upper band",
+          logic: "Close > UpperBand && Close[1] <= UpperBand[1]"
         },
         {
           id: "short_breakout",
-          description: "Sell when price breaks below lower band after squeeze",
-          logic: "Close < LowerBand && ATR[0] > ATR[10] && BandWidth < AvgBandWidth"
+          description: "Sell when price breaks below lower band",
+          logic: "Close < LowerBand && Close[1] >= LowerBand[1]"
         }
       ],
       exits: [
         {
           id: "exit_opposite_band",
-          description: "Exit at opposite Bollinger Band",
-          logic: "Price reaches opposite band"
+          description: "Exit at middle or opposite Bollinger Band",
+          logic: "Price reaches middle band"
         }
       ],
       stopLoss: { type: "atr", atrMultiplier: 2 },
@@ -173,10 +177,11 @@ export const strategyTemplates: StrategyTemplate[] = [
     }
   },
   {
-    id: "macd-divergence",
-    name: "MACD Divergence",
-    description: "Identifies trend reversals by spotting divergence between price action and MACD indicator. Advanced pattern recognition strategy.",
-    category: "Mean Reversion",
+    id: "macd-momentum",
+    name: "MACD Momentum",
+    description: "Trade MACD signal line crossovers with histogram confirmation. Clean momentum signals for trend entries.",
+    category: "Trend Following",
+    recommendedPairs: "EURUSD, USDJPY, GBPUSD",
     config: {
       instruments: ["EURUSD", "USDJPY", "GBPUSD"],
       timeframe: "15m",
@@ -189,26 +194,26 @@ export const strategyTemplates: StrategyTemplate[] = [
           name: "MACD",
           type: "MACD",
           params: { fast: 12, slow: 26, signal: 9 },
-          condition: "Divergence detection"
+          condition: "Signal crossover"
         },
         {
-          id: "rsi",
-          name: "RSI",
-          type: "RSI",
-          params: { period: 14 },
-          condition: "Confirmation filter"
+          id: "ema_50",
+          name: "EMA 50",
+          type: "EMA",
+          params: { period: 50 },
+          condition: "Trend filter"
         }
       ],
       entries: [
         {
-          id: "bullish_divergence",
-          description: "Buy on bullish divergence: lower price lows, higher MACD lows",
-          logic: "Price makes lower low && MACD makes higher low && RSI > 30"
+          id: "bullish_cross",
+          description: "Buy when MACD crosses above signal line",
+          logic: "MACD[0] > Signal[0] && MACD[1] <= Signal[1] && Close > EMA50"
         },
         {
-          id: "bearish_divergence",
-          description: "Sell on bearish divergence: higher price highs, lower MACD highs",
-          logic: "Price makes higher high && MACD makes lower high && RSI < 70"
+          id: "bearish_cross",
+          description: "Sell when MACD crosses below signal line",
+          logic: "MACD[0] < Signal[0] && MACD[1] >= Signal[1] && Close < EMA50"
         }
       ],
       exits: [
@@ -218,7 +223,7 @@ export const strategyTemplates: StrategyTemplate[] = [
           logic: "MACD crosses signal line"
         }
       ],
-      stopLoss: { type: "structure", pips: 15 },
+      stopLoss: { type: "atr", atrMultiplier: 1.5 },
       takeProfit: { type: "rr", ratio: 2 },
       maxDailyLoss: 20,
       positionSizePercent: 2,
@@ -229,6 +234,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "1-Minute Scalper",
     description: "Fast-paced scalping combining EMA trend and RSI momentum. Targets quick 5-10 pip moves in high-liquidity sessions.",
     category: "Scalping",
+    recommendedPairs: "EURUSD, GBPUSD, USDJPY",
     config: {
       instruments: ["EURUSD", "GBPUSD", "USDJPY"],
       timeframe: "1m",
@@ -261,13 +267,13 @@ export const strategyTemplates: StrategyTemplate[] = [
       entries: [
         {
           id: "long_scalp",
-          description: "Buy when price above EMA and RSI shows bullish momentum",
-          logic: "Close > EMA20 && RSI > 50 && RSI < 70 && Price pullback to EMA"
+          description: "Buy when price above EMA and RSI bullish",
+          logic: "Close > EMA20 && RSI > 50 && RSI < 70"
         },
         {
           id: "short_scalp",
-          description: "Sell when price below EMA and RSI shows bearish momentum",
-          logic: "Close < EMA20 && RSI < 50 && RSI > 30 && Price pullback to EMA"
+          description: "Sell when price below EMA and RSI bearish",
+          logic: "Close < EMA20 && RSI < 50 && RSI > 30"
         }
       ],
       exits: [
@@ -288,8 +294,9 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Volatility Index Breakout",
     description: "Specialized for synthetic volatility indices. Trades spike patterns and volatility breakouts with tight risk management.",
     category: "Breakout",
+    recommendedPairs: "VOL75, VOL100, VOL50",
     config: {
-      instruments: ["VOL75", "VOL100", "BOOM1000"],
+      instruments: ["VOL75", "VOL100", "VOL50"],
       timeframe: "1m",
       accountSize: 100,
       dailyTarget: 200,
@@ -313,20 +320,20 @@ export const strategyTemplates: StrategyTemplate[] = [
       entries: [
         {
           id: "spike_long",
-          description: "Buy after volatility spike with trend confirmation",
-          logic: "Price touches lower BB && Close > EMA50 && Previous spike down"
+          description: "Buy when price bounces from lower BB with trend",
+          logic: "Close <= LowerBand && Close > EMA50"
         },
         {
           id: "spike_short",
-          description: "Sell after volatility spike with trend confirmation",
-          logic: "Price touches upper BB && Close < EMA50 && Previous spike up"
+          description: "Sell when price bounces from upper BB with trend",
+          logic: "Close >= UpperBand && Close < EMA50"
         }
       ],
       exits: [
         {
           id: "mean_reversion",
           description: "Exit at middle BB or opposite spike",
-          logic: "Price returns to BB middle or opposite signal"
+          logic: "Price returns to BB middle"
         }
       ],
       stopLoss: { type: "fixed", pips: 15 },
@@ -340,6 +347,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Stochastic Reversal",
     description: "Captures trend reversals using Stochastic oscillator crossovers in oversold/overbought zones. High win rate in ranging conditions.",
     category: "Mean Reversion",
+    recommendedPairs: "EURUSD, GBPUSD, AUDUSD",
     config: {
       instruments: ["EURUSD", "GBPUSD", "AUDUSD"],
       timeframe: "5m",
@@ -355,30 +363,30 @@ export const strategyTemplates: StrategyTemplate[] = [
           condition: "K/D crossover in extreme zones"
         },
         {
-          id: "ema_100",
-          name: "EMA 100",
+          id: "ema_50",
+          name: "EMA 50",
           type: "EMA",
-          params: { period: 100 },
+          params: { period: 50 },
           condition: "Trend filter"
         }
       ],
       entries: [
         {
           id: "long_stoch",
-          description: "Buy when %K crosses above %D below 20 level",
-          logic: "K[0] > D[0] && K[1] <= D[1] && K[0] < 30 && Close > EMA100"
+          description: "Buy when %K crosses above %D below 30",
+          logic: "K[0] > D[0] && K[1] <= D[1] && K[0] < 30"
         },
         {
           id: "short_stoch",
-          description: "Sell when %K crosses below %D above 80 level",
-          logic: "K[0] < D[0] && K[1] >= D[1] && K[0] > 70 && Close < EMA100"
+          description: "Sell when %K crosses below %D above 70",
+          logic: "K[0] < D[0] && K[1] >= D[1] && K[0] > 70"
         }
       ],
       exits: [
         {
           id: "opposite_zone",
           description: "Exit when Stochastic reaches opposite extreme",
-          logic: "Stochastic reaches opposite overbought/oversold zone"
+          logic: "Stochastic reaches opposite zone"
         }
       ],
       stopLoss: { type: "fixed", pips: 12 },
@@ -392,6 +400,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "NASDAQ Momentum",
     description: "Trend-following strategy optimized for US indices. Trades with momentum during high-volume US sessions.",
     category: "Trend Following",
+    recommendedPairs: "NAS100, US30, SPX500",
     config: {
       instruments: ["NAS100", "US30", "SPX500"],
       timeframe: "5m",
@@ -451,8 +460,9 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Boom & Crash Spike Catcher",
     description: "Specialized strategy for Boom/Crash indices. Catches spikes using Bollinger Band extremes and momentum confirmation.",
     category: "Scalping",
+    recommendedPairs: "BOOM1000, CRASH1000, BOOM500, CRASH500",
     config: {
-      instruments: ["BOOM500", "BOOM1000", "CRASH500", "CRASH1000"],
+      instruments: ["BOOM1000", "CRASH1000", "BOOM500", "CRASH500"],
       timeframe: "1m",
       accountSize: 100,
       dailyTarget: 200,
@@ -476,13 +486,13 @@ export const strategyTemplates: StrategyTemplate[] = [
       entries: [
         {
           id: "boom_entry",
-          description: "Buy on Boom after price touches lower BB with RSI oversold",
-          logic: "Close <= LowerBB && RSI < 30 && Previous candles bearish"
+          description: "Buy on Boom when RSI oversold at lower BB",
+          logic: "Close <= LowerBand && RSI < 35"
         },
         {
           id: "crash_entry",
-          description: "Sell on Crash after price touches upper BB with RSI overbought",
-          logic: "Close >= UpperBB && RSI > 70 && Previous candles bullish"
+          description: "Sell on Crash when RSI overbought at upper BB",
+          logic: "Close >= UpperBand && RSI > 65"
         }
       ],
       exits: [
@@ -503,6 +513,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "London Session Breakout",
     description: "Trades the breakout of Asian session range during London open. High probability due to increased liquidity.",
     category: "Breakout",
+    recommendedPairs: "EURUSD, GBPUSD, EURGBP",
     config: {
       instruments: ["EURUSD", "GBPUSD", "EURGBP"],
       timeframe: "15m",
@@ -529,12 +540,12 @@ export const strategyTemplates: StrategyTemplate[] = [
         {
           id: "breakout_long",
           description: "Buy when price breaks above Asian high at London open",
-          logic: "Close > AsianHigh && Hour >= 8 && Hour < 10 && Close > EMA50"
+          logic: "Close > EMA50 && RSI > 50"
         },
         {
           id: "breakout_short",
           description: "Sell when price breaks below Asian low at London open",
-          logic: "Close < AsianLow && Hour >= 8 && Hour < 10 && Close < EMA50"
+          logic: "Close < EMA50 && RSI < 50"
         }
       ],
       exits: [
@@ -544,7 +555,7 @@ export const strategyTemplates: StrategyTemplate[] = [
           logic: "Fixed target or end of London session"
         }
       ],
-      stopLoss: { type: "structure" },
+      stopLoss: { type: "atr", atrMultiplier: 1.5 },
       takeProfit: { type: "rr", ratio: 2 },
       maxDailyLoss: 20,
       positionSizePercent: 2,
@@ -555,6 +566,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Triple EMA Trend",
     description: "Strong trend filter using three EMAs aligned in order. Only trades when all EMAs confirm direction.",
     category: "Trend Following",
+    recommendedPairs: "EURUSD, GBPUSD, USDJPY, AUDUSD",
     config: {
       instruments: ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"],
       timeframe: "5m",
@@ -588,12 +600,12 @@ export const strategyTemplates: StrategyTemplate[] = [
         {
           id: "bullish_stack",
           description: "Buy when EMA8 > EMA21 > EMA55 (bullish stack)",
-          logic: "EMA8 > EMA21 && EMA21 > EMA55 && Price pullback to EMA8"
+          logic: "EMA8 > EMA21 && EMA21 > EMA55"
         },
         {
           id: "bearish_stack",
           description: "Sell when EMA8 < EMA21 < EMA55 (bearish stack)",
-          logic: "EMA8 < EMA21 && EMA21 < EMA55 && Price pullback to EMA8"
+          logic: "EMA8 < EMA21 && EMA21 < EMA55"
         }
       ],
       exits: [
@@ -614,8 +626,9 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "RSI + Bollinger Combo",
     description: "Multi-indicator confirmation strategy. Requires both RSI and BB signals to align before entry.",
     category: "Mean Reversion",
+    recommendedPairs: "EURUSD, GBPUSD, VOL75",
     config: {
-      instruments: ["EURUSD", "GBPUSD", "VOL50", "VOL75"],
+      instruments: ["EURUSD", "GBPUSD", "VOL75"],
       timeframe: "5m",
       accountSize: 100,
       dailyTarget: 150,
@@ -640,12 +653,12 @@ export const strategyTemplates: StrategyTemplate[] = [
         {
           id: "double_confirm_long",
           description: "Buy when RSI oversold AND price at lower BB",
-          logic: "RSI < 30 && Close <= LowerBB"
+          logic: "RSI < 30 && Close <= LowerBand"
         },
         {
           id: "double_confirm_short",
           description: "Sell when RSI overbought AND price at upper BB",
-          logic: "RSI > 70 && Close >= UpperBB"
+          logic: "RSI > 70 && Close >= UpperBand"
         }
       ],
       exits: [
@@ -666,8 +679,9 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Asian Range Breakout",
     description: "Trades the breakout of the tight Asian session range. Best for JPY pairs with clear range definition.",
     category: "Breakout",
+    recommendedPairs: "USDJPY, EURJPY, GBPJPY",
     config: {
-      instruments: ["USDJPY", "EURJPY", "GBPJPY", "AUDJPY"],
+      instruments: ["USDJPY", "EURJPY", "GBPJPY"],
       timeframe: "15m",
       accountSize: 100,
       dailyTarget: 150,
@@ -681,33 +695,40 @@ export const strategyTemplates: StrategyTemplate[] = [
           condition: "Volatility measure"
         },
         {
-          id: "ema_200",
-          name: "EMA 200",
+          id: "ema_50",
+          name: "EMA 50",
           type: "EMA",
-          params: { period: 200 },
-          condition: "Long-term bias"
+          params: { period: 50 },
+          condition: "Trend bias"
+        },
+        {
+          id: "rsi",
+          name: "RSI",
+          type: "RSI",
+          params: { period: 14 },
+          condition: "Momentum"
         }
       ],
       entries: [
         {
           id: "range_break_long",
-          description: "Buy when price breaks Asian high with trend",
-          logic: "Close > AsianHigh && Close > EMA200 && ATR expanding"
+          description: "Buy when price breaks with bullish momentum",
+          logic: "Close > EMA50 && RSI > 55"
         },
         {
           id: "range_break_short",
-          description: "Sell when price breaks Asian low with trend",
-          logic: "Close < AsianLow && Close < EMA200 && ATR expanding"
+          description: "Sell when price breaks with bearish momentum",
+          logic: "Close < EMA50 && RSI < 45"
         }
       ],
       exits: [
         {
           id: "range_target",
           description: "Target equal to Asian range size",
-          logic: "Move equal to Asian range or reversal signal"
+          logic: "Fixed target or reversal signal"
         }
       ],
-      stopLoss: { type: "structure" },
+      stopLoss: { type: "atr", atrMultiplier: 1.5 },
       takeProfit: { type: "rr", ratio: 2 },
       maxDailyLoss: 25,
       positionSizePercent: 1.5,
@@ -718,8 +739,9 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Synthetic Index Scalper",
     description: "Optimized for Deriv synthetic indices. Fast entries on volatility spikes with tight risk management.",
     category: "Scalping",
+    recommendedPairs: "VOL75, VOL100, VOL50, VOL25",
     config: {
-      instruments: ["VOL10", "VOL25", "VOL50", "VOL75", "VOL100"],
+      instruments: ["VOL75", "VOL100", "VOL50", "VOL25"],
       timeframe: "1m",
       accountSize: 100,
       dailyTarget: 200,
@@ -773,10 +795,11 @@ export const strategyTemplates: StrategyTemplate[] = [
     }
   },
   {
-    id: "gold-momentum",
+    id: "index-momentum",
     name: "Index Momentum Rider",
     description: "Rides strong momentum moves on indices. Uses ATR for volatility-adjusted entries and exits.",
     category: "Trend Following",
+    recommendedPairs: "NAS100, GER40, US30",
     config: {
       instruments: ["NAS100", "GER40", "US30"],
       timeframe: "5m",
@@ -809,13 +832,13 @@ export const strategyTemplates: StrategyTemplate[] = [
       entries: [
         {
           id: "momentum_long",
-          description: "Buy on pullback to EMA with strong momentum",
-          logic: "Price touches EMA20 && RSI > 50 && ATR above average"
+          description: "Buy on pullback with strong momentum",
+          logic: "Close > EMA20 && RSI > 50 && RSI < 75"
         },
         {
           id: "momentum_short",
-          description: "Sell on pullback to EMA with weak momentum",
-          logic: "Price touches EMA20 && RSI < 50 && ATR above average"
+          description: "Sell on pullback with weak momentum",
+          logic: "Close < EMA20 && RSI < 50 && RSI > 25"
         }
       ],
       exits: [
@@ -836,6 +859,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: "Jump Index Trader",
     description: "Specialized for Jump indices with sudden price movements. Uses quick entries after jump detection.",
     category: "Breakout",
+    recommendedPairs: "JUMP10, JUMP25, JUMP50, JUMP75, JUMP100",
     config: {
       instruments: ["JUMP10", "JUMP25", "JUMP50", "JUMP75", "JUMP100"],
       timeframe: "1m",
@@ -856,18 +880,25 @@ export const strategyTemplates: StrategyTemplate[] = [
           type: "EMA",
           params: { period: 10 },
           condition: "Quick trend"
+        },
+        {
+          id: "rsi",
+          name: "RSI",
+          type: "RSI",
+          params: { period: 7 },
+          condition: "Momentum"
         }
       ],
       entries: [
         {
           id: "jump_long",
-          description: "Buy after upward jump when price stabilizes",
-          logic: "Jump up detected && Price above EMA10 && Consolidating"
+          description: "Buy when price above EMA with bullish momentum",
+          logic: "Close > EMA10 && RSI > 50 && RSI < 75"
         },
         {
           id: "jump_short",
-          description: "Sell after downward jump when price stabilizes",
-          logic: "Jump down detected && Price below EMA10 && Consolidating"
+          description: "Sell when price below EMA with bearish momentum",
+          logic: "Close < EMA10 && RSI < 50 && RSI > 25"
         }
       ],
       exits: [
