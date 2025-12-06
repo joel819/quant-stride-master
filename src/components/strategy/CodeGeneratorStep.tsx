@@ -293,16 +293,80 @@ int OnInit()
    // Initialize date tracking
    lastTradeDate = TimeCurrent();
    
-   // Determine pip multiplier based on symbol digits
+   // Determine pip multiplier based on symbol type and digits
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   if(digits == 3 || digits == 5)
-      pipMultiplier = 10.0;
-   else if(digits == 2)
-      pipMultiplier = 1.0;
-   else
-      pipMultiplier = 1.0;
+   string symbolName = _Symbol;
    
-   Print("Symbol: ", _Symbol, " | Digits: ", digits, " | Pip multiplier: ", pipMultiplier);
+   // Check if this is a synthetic index (Volatility, Boom, Crash, Jump, Step, Range)
+   bool isSynthetic = (StringFind(symbolName, "Volatility") >= 0 ||
+                       StringFind(symbolName, "Vol") >= 0 ||
+                       StringFind(symbolName, "Boom") >= 0 ||
+                       StringFind(symbolName, "Crash") >= 0 ||
+                       StringFind(symbolName, "Jump") >= 0 ||
+                       StringFind(symbolName, "Step") >= 0 ||
+                       StringFind(symbolName, "Range") >= 0 ||
+                       StringFind(symbolName, "1 Index") >= 0 ||
+                       StringFind(symbolName, "10 Index") >= 0 ||
+                       StringFind(symbolName, "25 Index") >= 0 ||
+                       StringFind(symbolName, "50 Index") >= 0 ||
+                       StringFind(symbolName, "75 Index") >= 0 ||
+                       StringFind(symbolName, "100 Index") >= 0 ||
+                       StringFind(symbolName, "200 Index") >= 0 ||
+                       StringFind(symbolName, "300 Index") >= 0);
+   
+   // Check if this is a stock index (NAS100, US30, etc.)
+   bool isStockIndex = (StringFind(symbolName, "NAS") >= 0 ||
+                        StringFind(symbolName, "US30") >= 0 ||
+                        StringFind(symbolName, "US500") >= 0 ||
+                        StringFind(symbolName, "SPX") >= 0 ||
+                        StringFind(symbolName, "GER") >= 0 ||
+                        StringFind(symbolName, "UK100") >= 0 ||
+                        StringFind(symbolName, "JP225") >= 0);
+   
+   if(isSynthetic)
+   {
+      // Synthetic indices: 1 pip = 1.0 point typically, but need larger values
+      // For Volatility 75, minimum stop is usually 100+ points
+      pipMultiplier = 100.0;  // Use larger multiplier for synthetics
+      Print("Detected SYNTHETIC INDEX - using pipMultiplier: ", pipMultiplier);
+   }
+   else if(isStockIndex)
+   {
+      // Stock indices: 1 pip = 1.0 or 0.1 point depending on broker
+      pipMultiplier = 1.0;
+      Print("Detected STOCK INDEX - using pipMultiplier: ", pipMultiplier);
+   }
+   else if(digits == 3 || digits == 5)
+   {
+      // Forex 5-digit or JPY 3-digit pairs
+      pipMultiplier = 10.0;
+   }
+   else if(digits == 2)
+   {
+      // JPY pairs with 2 digits
+      pipMultiplier = 1.0;
+   }
+   else
+   {
+      pipMultiplier = 1.0;
+   }
+   
+   // Validate against minimum stop level
+   double minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+   double testDistance = StopLossPips * _Point * pipMultiplier;
+   
+   if(testDistance < minStopLevel && minStopLevel > 0)
+   {
+      // Adjust pipMultiplier to ensure stops are valid
+      double requiredMultiplier = (minStopLevel / (_Point * StopLossPips)) * 1.5; // 50% buffer
+      if(requiredMultiplier > pipMultiplier)
+      {
+         pipMultiplier = MathCeil(requiredMultiplier);
+         Print("Adjusted pipMultiplier to meet minimum stop level: ", pipMultiplier);
+      }
+   }
+   
+   Print("Symbol: ", _Symbol, " | Digits: ", digits, " | Pip multiplier: ", pipMultiplier, " | Min stop level: ", minStopLevel);
    
    // Initialize indicators
 ${generateIndicatorInit()}
