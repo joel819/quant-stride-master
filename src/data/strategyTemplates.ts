@@ -266,62 +266,83 @@ export const strategyTemplates: StrategyTemplate[] = [
   },
   {
     id: "volatility-75-scalper",
-    name: "Volatility 75 Scalper",
-    description: "Optimized for V75 with proper pip multiplier. Uses EMA pullback entries with RSI momentum filter.",
+    name: "Volatility 75 Pro Scalper",
+    description: "High-probability V75 strategy with triple confirmation: EMA stack + RSI momentum + ATR volatility filter. Only trades during optimal volatility conditions.",
     category: "Scalping",
     recommendedPairs: "Volatility 75 Index (Synthetics only)",
     config: {
       instruments: ["VOL75"],
       timeframe: "1m",
       accountSize: 100,
-      dailyTarget: 150,
+      dailyTarget: 100,
       sessions: ["london", "newyork", "overlap", "asian"],
       indicators: [
         {
-          id: "ema_10",
-          name: "EMA 10",
+          id: "ema_8",
+          name: "EMA 8",
           type: "EMA",
-          params: { period: 10 },
-          condition: "Fast trend reference"
+          params: { period: 8 },
+          condition: "Fast trend - must align with EMA21"
         },
         {
-          id: "ema_30",
-          name: "EMA 30",
+          id: "ema_21",
+          name: "EMA 21",
           type: "EMA",
-          params: { period: 30 },
-          condition: "Medium trend filter"
+          params: { period: 21 },
+          condition: "Medium trend confirmation"
+        },
+        {
+          id: "ema_50",
+          name: "EMA 50",
+          type: "EMA",
+          params: { period: 50 },
+          condition: "Slow trend filter - overall bias"
         },
         {
           id: "rsi",
           name: "RSI",
           type: "RSI",
-          params: { period: 7 },
-          condition: "Quick momentum (avoid extremes)"
+          params: { period: 14 },
+          condition: "Momentum filter (55-70 for longs, 30-45 for shorts)"
+        },
+        {
+          id: "atr",
+          name: "ATR",
+          type: "ATR",
+          params: { period: 14 },
+          condition: "Volatility filter - skip low volatility periods"
+        },
+        {
+          id: "bb",
+          name: "Bollinger Bands",
+          type: "BB",
+          params: { period: 20, deviation: 2 },
+          condition: "Price extreme detection - avoid chasing"
         }
       ],
       entries: [
         {
           id: "v75_long",
-          description: "Buy on pullback to EMA10 with RSI momentum",
-          logic: "EMA10 > EMA30 && Close > EMA10 && RSI > 50 && RSI < 70"
+          description: "Buy ONLY when: Triple EMA bullish stack (8>21>50) + RSI 55-68 + Price NOT at upper BB + Pullback to EMA8",
+          logic: "EMA8 > EMA21 && EMA21 > EMA50 && Close > EMA8 && Low <= EMA8 && RSI > 55 && RSI < 68 && Close < UpperBand"
         },
         {
           id: "v75_short",
-          description: "Sell on pullback to EMA10 with RSI weakness",
-          logic: "EMA10 < EMA30 && Close < EMA10 && RSI < 50 && RSI > 30"
+          description: "Sell ONLY when: Triple EMA bearish stack (8<21<50) + RSI 32-45 + Price NOT at lower BB + Pullback to EMA8",
+          logic: "EMA8 < EMA21 && EMA21 < EMA50 && Close < EMA8 && High >= EMA8 && RSI > 32 && RSI < 45 && Close > LowerBand"
         }
       ],
       exits: [
         {
-          id: "quick_target",
-          description: "Quick exit at fixed pip target",
-          logic: "Fixed pip target reached"
+          id: "trailing_exit",
+          description: "Trailing stop protects profits after 80 pips, breakeven at 50 pips",
+          logic: "Breakeven at 50 pips, trail at 40 pips distance after 80 pips profit"
         }
       ],
-      stopLoss: { type: "fixed", pips: 60 },
-      takeProfit: { type: "fixed", pips: 100 },
-      maxDailyLoss: 20,
-      positionSizePercent: 1,
+      stopLoss: { type: "fixed", pips: 80 },
+      takeProfit: { type: "rr", ratio: 2 },
+      maxDailyLoss: 15,
+      positionSizePercent: 0.5,
     }
   },
   {
