@@ -232,6 +232,15 @@ input int MaxDailyLoss = ${config.maxDailyLoss || 100};                // Max Da
 input double DailyTarget = ${config.dailyTarget || 200.0};             // Daily Target ($)
 input int MaxDailyTrades = 10;                                         // Max trades per day
 
+input group "=== Drawdown Protection ==="
+input bool UseDrawdownProtection = true;                               // Enable Drawdown Protection
+input double MaxTotalDrawdownPercent = 20.0;                           // Max Account Drawdown (%)
+input double EquityStopPercent = 15.0;                                 // Equity stop level (%)
+input int MaxConsecutiveLosses = 4;                                    // Max consecutive losses before pause
+input int CoolingOffMinutes = 60;                                      // Cooling off period (minutes)
+input bool UseDynamicRiskReduction = true;                             // Reduce risk after losses
+input double RiskReductionFactor = 0.5;                                // Risk reduction factor per loss
+
 input group "=== General Settings ==="
 input int MagicNumber = 12345;                                         // Magic Number
 input bool EnableDebugMode = true;                                     // Enable detailed logging
@@ -278,6 +287,15 @@ double originalPositionSize = 0.0;
 // Structure tracking for breakouts
 double recentHigh = 0.0;
 double recentLow = 0.0;
+
+// Drawdown protection tracking
+double startingBalance = 0.0;
+double peakBalance = 0.0;
+double currentDrawdownPercent = 0.0;
+bool drawdownHaltActive = false;
+datetime coolingOffEndTime = 0;
+int todayLossStreak = 0;
+double dynamicRiskMultiplier = 1.0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -419,6 +437,17 @@ ${generateIndicatorInit()}
    if(UseNewsFilter)
       CheckNewsCalendar();
    
+   // Initialize drawdown protection tracking
+   startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   peakBalance = startingBalance;
+   currentDrawdownPercent = 0.0;
+   drawdownHaltActive = false;
+   dynamicRiskMultiplier = 1.0;
+   Print("=== DRAWDOWN PROTECTION ===");
+   Print("Starting Balance: ", startingBalance, " | Max DD: ", MaxTotalDrawdownPercent, "%");
+   Print("Equity Stop: ", EquityStopPercent, "% | Max Consec Losses: ", MaxConsecutiveLosses);
+   Print("=== END DRAWDOWN PROTECTION ===");
+   
    Print("All indicators initialized successfully");
    Print("=========================================");
    return(INIT_SUCCEEDED);
@@ -495,11 +524,19 @@ void OnTick()
       consecutiveLosses = 0;
       consecutiveWins = 0;
       martingaleLevel = 0;
+      todayLossStreak = 0;
+      dynamicRiskMultiplier = 1.0;
+      coolingOffEndTime = 0;
+      drawdownHaltActive = false;
       Print("========== NEW TRADING DAY STARTED ==========");
    }
    
    // Update daily PnL
    UpdateDailyPnL();
+   
+   // Update drawdown tracking
+   if(UseDrawdownProtection)
+      UpdateDrawdownProtection();
    
    // Update market structure
    UpdateMarketStructure();
@@ -513,6 +550,41 @@ void OnTick()
       CheckNewsCalendar();
    
    // === TRADING FILTERS ===
+   
+   // === DRAWDOWN PROTECTION FILTERS ===
+   if(UseDrawdownProtection)
+   {
+      // Circuit breaker - max total drawdown reached
+      if(drawdownHaltActive)
+      {
+         if(EnableDebugMode) Print("DRAWDOWN HALT: Max drawdown exceeded. Trading suspended.");
+         return;
+      }
+      
+      // Equity-based stop
+      double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      double equityDropPercent = ((startingBalance - currentEquity) / startingBalance) * 100.0;
+      if(equityDropPercent >= EquityStopPercent)
+      {
+         if(EnableDebugMode) Print("EQUITY STOP: Equity dropped ", DoubleToString(equityDropPercent, 1), "%. No new trades.");
+         return;
+      }
+      
+      // Consecutive loss pause - cooling off period
+      if(consecutiveLosses >= MaxConsecutiveLosses && TimeCurrent() < coolingOffEndTime)
+      {
+         if(EnableDebugMode) Print("COOLING OFF: ", MaxConsecutiveLosses, " consecutive losses. Waiting until ", TimeToString(coolingOffEndTime));
+         return;
+      }
+      
+      // If cooling off period ended, reset
+      if(TimeCurrent() >= coolingOffEndTime && coolingOffEndTime > 0)
+      {
+         Print("COOLING OFF ENDED: Resuming trading with reduced risk");
+         coolingOffEndTime = 0;
+         // Keep reduced risk active
+      }
+   }
    
    // Daily target check
    if(dailyTargetReached)
@@ -1070,6 +1142,31 @@ double CalculateLotSize()
          break;
    }
    
+   // === DYNAMIC RISK REDUCTION ===
+   // Apply drawdown-based risk reduction
+   if(UseDrawdownProtection && UseDynamicRiskReduction)
+   {
+      // Reduce lot size after consecutive losses
+      if(consecutiveLosses > 0)
+      {
+         dynamicRiskMultiplier = MathMax(0.25, MathPow(RiskReductionFactor, consecutiveLosses));
+         lotSize = lotSize * dynamicRiskMultiplier;
+         Print("DYNAMIC RISK: Reduced by ", DoubleToString((1 - dynamicRiskMultiplier) * 100, 0), "% due to ", consecutiveLosses, " losses");
+      }
+      else
+      {
+         dynamicRiskMultiplier = 1.0;
+      }
+      
+      // Additional reduction if in drawdown
+      if(currentDrawdownPercent > 10.0)
+      {
+         double ddReduction = 1.0 - (currentDrawdownPercent / 100.0);
+         lotSize = lotSize * MathMax(0.25, ddReduction);
+         Print("DRAWDOWN RISK: Further reduced to ", DoubleToString(ddReduction * 100, 0), "% due to DD");
+      }
+   }
+   
    // Normalize to allowed lot sizes
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
@@ -1221,6 +1318,14 @@ void UpdateDailyPnL()
             {
                consecutiveLosses++;
                consecutiveWins = 0;
+               todayLossStreak++;
+               
+               // Trigger cooling off period after max consecutive losses
+               if(UseDrawdownProtection && consecutiveLosses >= MaxConsecutiveLosses && coolingOffEndTime == 0)
+               {
+                  coolingOffEndTime = TimeCurrent() + CoolingOffMinutes * 60;
+                  Print("*** COOLING OFF ACTIVATED: ", MaxConsecutiveLosses, " consecutive losses. Pausing until ", TimeToString(coolingOffEndTime));
+               }
             }
          }
       }
@@ -1233,6 +1338,100 @@ void UpdateDailyPnL()
    if(dailyPnL >= DailyTarget)
    {
       dailyTargetReached = true;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Update drawdown protection tracking                              |
+//+------------------------------------------------------------------+
+void UpdateDrawdownProtection()
+{
+   double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   
+   // Update peak balance (high water mark)
+   if(currentBalance > peakBalance)
+   {
+      peakBalance = currentBalance;
+      Print("NEW PEAK BALANCE: ", peakBalance);
+   }
+   
+   // Calculate current drawdown from peak
+   if(peakBalance > 0)
+   {
+      currentDrawdownPercent = ((peakBalance - currentBalance) / peakBalance) * 100.0;
+   }
+   
+   // Calculate equity drawdown from starting balance
+   double equityDrawdownPercent = ((startingBalance - currentEquity) / startingBalance) * 100.0;
+   
+   // Check max total drawdown circuit breaker
+   if(currentDrawdownPercent >= MaxTotalDrawdownPercent && !drawdownHaltActive)
+   {
+      drawdownHaltActive = true;
+      Print("!!! DRAWDOWN HALT ACTIVATED !!!");
+      Print("Current DD: ", DoubleToString(currentDrawdownPercent, 2), "% | Max Allowed: ", MaxTotalDrawdownPercent, "%");
+      Print("Peak Balance: ", peakBalance, " | Current Balance: ", currentBalance);
+      
+      // Close all open positions when drawdown limit hit
+      CloseAllPositions();
+   }
+   
+   // Check equity-based circuit breaker
+   if(equityDrawdownPercent >= EquityStopPercent && !drawdownHaltActive)
+   {
+      drawdownHaltActive = true;
+      Print("!!! EQUITY STOP ACTIVATED !!!");
+      Print("Equity DD: ", DoubleToString(equityDrawdownPercent, 2), "% | Limit: ", EquityStopPercent, "%");
+      
+      CloseAllPositions();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Close all open positions                                         |
+//+------------------------------------------------------------------+
+void CloseAllPositions()
+{
+   Print("EMERGENCY CLOSE: Closing all positions due to drawdown protection");
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            long positionType = PositionGetInteger(POSITION_TYPE);
+            double volume = PositionGetDouble(POSITION_VOLUME);
+            
+            MqlTradeRequest request = {};
+            MqlTradeResult result = {};
+            
+            request.action = TRADE_ACTION_DEAL;
+            request.symbol = _Symbol;
+            request.volume = volume;
+            request.type = (positionType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+            request.position = ticket;
+            request.price = (positionType == POSITION_TYPE_BUY) ? 
+                           SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                           SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+            request.deviation = 50;
+            request.magic = MagicNumber;
+            request.comment = "DD_PROTECTION_CLOSE";
+            request.type_filling = GetAllowedFillingMode();
+            
+            if(OrderSend(request, result))
+            {
+               Print("Position ", ticket, " closed for drawdown protection");
+            }
+            else
+            {
+               Print("Failed to close position ", ticket, ". Error: ", GetLastError());
+            }
+         }
+      }
    }
 }
 
@@ -1589,8 +1788,8 @@ void DrawDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
       ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, xOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, yOffset - 10);
-      ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 260);
-      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 250);
+      ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 280);
+      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 340);
       ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, C'15,15,25');
       ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bgName, OBJPROP_COLOR, clrDodgerBlue);
@@ -1614,6 +1813,34 @@ void DrawDashboard()
    CreateLabel(prefix + "Target", xOffset, yOffset + lineHeight * line++, "To Target: $" + DoubleToString(distanceToTarget, 2), clrYellow, fontSize);
    CreateLabel(prefix + "MaxLoss", xOffset, yOffset + lineHeight * line++, "To Max Loss: $" + DoubleToString(distanceToMaxLoss, 2), clrOrange, fontSize);
    
+   // === DRAWDOWN PROTECTION SECTION ===
+   line++;
+   CreateLabel(prefix + "Sep0", xOffset, yOffset + lineHeight * line++, "─── DRAWDOWN PROTECTION ───", clrMagenta, fontSize);
+   
+   // Current drawdown
+   color ddColor = (currentDrawdownPercent < 10) ? clrLime : (currentDrawdownPercent < 15) ? clrYellow : clrRed;
+   CreateLabel(prefix + "DD", xOffset, yOffset + lineHeight * line++, "Drawdown: " + DoubleToString(currentDrawdownPercent, 1) + "% / " + DoubleToString(MaxTotalDrawdownPercent, 0) + "%", ddColor, fontSize);
+   
+   // Risk multiplier
+   color riskColor = (dynamicRiskMultiplier >= 1.0) ? clrLime : (dynamicRiskMultiplier >= 0.5) ? clrYellow : clrOrange;
+   CreateLabel(prefix + "Risk", xOffset, yOffset + lineHeight * line++, "Risk Mult: " + DoubleToString(dynamicRiskMultiplier * 100, 0) + "%", riskColor, fontSize);
+   
+   // Halt status
+   string haltStatus = drawdownHaltActive ? "HALTED!" : "ACTIVE";
+   color haltColor = drawdownHaltActive ? clrRed : clrLime;
+   CreateLabel(prefix + "Halt", xOffset, yOffset + lineHeight * line++, "Trading: " + haltStatus, haltColor, fontSize);
+   
+   // Cooling off
+   if(coolingOffEndTime > 0 && TimeCurrent() < coolingOffEndTime)
+   {
+      int minutesLeft = (int)((coolingOffEndTime - TimeCurrent()) / 60);
+      CreateLabel(prefix + "Cool", xOffset, yOffset + lineHeight * line++, "Cooldown: " + IntegerToString(minutesLeft) + " min", clrOrange, fontSize);
+   }
+   else
+   {
+      CreateLabel(prefix + "Cool", xOffset, yOffset + lineHeight * line++, "Cooldown: OFF", clrGray, fontSize);
+   }
+   
    // Advanced features
    line++;
    CreateLabel(prefix + "Sep1", xOffset, yOffset + lineHeight * line++, "─── ADVANCED FEATURES ───", clrGray, fontSize);
@@ -1628,7 +1855,7 @@ void DrawDashboard()
    
    // Protection
    line++;
-   CreateLabel(prefix + "Sep2", xOffset, yOffset + lineHeight * line++, "─── PROTECTION ───", clrGray, fontSize);
+   CreateLabel(prefix + "Sep2", xOffset, yOffset + lineHeight * line++, "─── POSITION MGMT ───", clrGray, fontSize);
    
    color beColor = (breakevenStatus == "LOCKED") ? clrLime : clrYellow;
    CreateLabel(prefix + "BE", xOffset, yOffset + lineHeight * line++, "Breakeven: " + breakevenStatus, beColor, fontSize);
