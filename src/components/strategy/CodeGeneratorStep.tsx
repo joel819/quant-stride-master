@@ -326,40 +326,56 @@ int OnInit()
    // Get minimum stop level from broker FIRST
    long minStopPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
    double minStopLevel = minStopPoints * _Point;
-   double spread = SymbolInfoDouble(_Symbol, SYMBOL_SPREAD) * _Point;
+   double currentSpread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   double spreadPrice = currentSpread * _Point;
    
    Print("=== STOP LEVEL ANALYSIS ===");
    Print("Symbol: ", _Symbol, " | Digits: ", digits);
    Print("Min stop level (points): ", minStopPoints, " | Min stop level (price): ", minStopLevel);
-   Print("Current spread: ", spread);
+   Print("Current spread (points): ", currentSpread, " | Spread (price): ", spreadPrice);
+   
+   // CRITICAL FIX: For synthetic indices, calculate MINIMUM safe stop first
+   // V75 and similar synthetics require 200-1000+ point stops depending on broker
+   double absoluteMinStopPrice = 0;
    
    if(isSynthetic)
    {
-      // Synthetic indices need MUCH larger pip multipliers
-      // V75 typically needs 200-500+ point stops minimum
-      pipMultiplier = 1.0;  // Start with 1:1 for synthetics (1 pip = 1 point)
+      Print("Detected SYNTHETIC INDEX");
       
-      // Calculate required pip multiplier based on broker's minimum stop level
-      if(minStopPoints > 0)
+      // For synthetics, we need to ensure stops are FAR enough
+      // Minimum should be at least: max(broker_min_stop, 200 points) + spread * 5
+      double minRequired = MathMax((double)minStopPoints, 200.0);
+      absoluteMinStopPrice = (minRequired + currentSpread * 5) * _Point;
+      
+      // pipMultiplier for synthetics: 1 pip = 1 point
+      pipMultiplier = 1.0;
+      
+      // Now ensure StopLossPips * pipMultiplier * _Point >= absoluteMinStopPrice
+      double calculatedDistance = StopLossPips * pipMultiplier * _Point;
+      
+      if(calculatedDistance < absoluteMinStopPrice)
       {
-         // Ensure our SL pips * multiplier >= minStopPoints * 2 (safety buffer)
-         double requiredMultiplier = (minStopPoints * 2.5) / StopLossPips;
-         if(requiredMultiplier > pipMultiplier)
-         {
-            pipMultiplier = MathCeil(requiredMultiplier);
-         }
-      }
-      else
-      {
-         // No min stop reported, use safe default for synthetics
-         pipMultiplier = 1.0;  // 1 pip = 1 point, rely on larger StopLossPips value
+         // Increase multiplier to make stops safe
+         double requiredMultiplier = absoluteMinStopPrice / (StopLossPips * _Point);
+         pipMultiplier = MathCeil(requiredMultiplier * 1.5); // 50% safety buffer
+         Print("SYNTHETIC: Increased pipMultiplier to ", pipMultiplier, " for safe stops");
       }
       
-      Print("Detected SYNTHETIC INDEX - pipMultiplier: ", pipMultiplier);
+      Print("Absolute min stop price: ", absoluteMinStopPrice, " | Current calculated: ", StopLossPips * pipMultiplier * _Point);
    }
    else if(isStockIndex)
    {
       pipMultiplier = 1.0;
+      absoluteMinStopPrice = (MathMax((double)minStopPoints, 50.0) + currentSpread * 3) * _Point;
+      
+      double calculatedDistance = StopLossPips * pipMultiplier * _Point;
+      if(calculatedDistance < absoluteMinStopPrice)
+      {
+         double requiredMultiplier = absoluteMinStopPrice / (StopLossPips * _Point);
+         pipMultiplier = MathCeil(requiredMultiplier * 1.5);
+         Print("STOCK INDEX: Increased pipMultiplier to ", pipMultiplier, " for safe stops");
+      }
+      
       Print("Detected STOCK INDEX - using pipMultiplier: ", pipMultiplier);
    }
    else if(digits == 3 || digits == 5)
@@ -375,9 +391,9 @@ int OnInit()
       pipMultiplier = 1.0;
    }
    
-   // CRITICAL: Final validation - ensure stop distance exceeds broker minimum
+   // FINAL SAFETY CHECK: Always verify against broker minimum
    double testDistance = StopLossPips * _Point * pipMultiplier;
-   double safeMinStop = minStopLevel + spread * 3; // Add spread buffer
+   double safeMinStop = minStopLevel + spreadPrice * 5; // Add generous spread buffer
    
    if(testDistance < safeMinStop && safeMinStop > 0)
    {
@@ -385,12 +401,12 @@ int OnInit()
       if(requiredMultiplier > pipMultiplier)
       {
          pipMultiplier = MathCeil(requiredMultiplier);
-         Print("*** ADJUSTED pipMultiplier for safe stops: ", pipMultiplier);
+         Print("*** FINAL ADJUSTMENT - pipMultiplier increased to: ", pipMultiplier);
       }
    }
    
    Print("Final pip multiplier: ", pipMultiplier);
-   Print("Test SL distance: ", testDistance, " | Safe min: ", safeMinStop);
+   Print("Final SL distance: ", StopLossPips * _Point * pipMultiplier, " | Safe min: ", safeMinStop);
    Print("=== END STOP LEVEL ANALYSIS ===");
    
    // Initialize indicators
@@ -880,17 +896,37 @@ void OpenTrade(ENUM_SIGNAL_TYPE signal)
    
    // CRITICAL: Validate stops against broker minimum BEFORE sending order
    long minStopPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double currentSpread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    double minStopDistance = minStopPoints * _Point;
-   double spread = SymbolInfoDouble(_Symbol, SYMBOL_SPREAD) * _Point;
-   double safeMinDistance = minStopDistance + spread * 3;
+   double spreadPrice = currentSpread * _Point;
+   
+   // Synthetic indices and volatile instruments need extra buffer
+   string symbolName = _Symbol;
+   bool isSynthetic = (StringFind(symbolName, "Volatility") >= 0 ||
+                       StringFind(symbolName, "Vol") >= 0 ||
+                       StringFind(symbolName, "Boom") >= 0 ||
+                       StringFind(symbolName, "Crash") >= 0 ||
+                       StringFind(symbolName, "Jump") >= 0 ||
+                       StringFind(symbolName, "Step") >= 0 ||
+                       StringFind(symbolName, "Range") >= 0);
+   
+   // Calculate safe minimum distance with generous buffers
+   double spreadMultiplier = isSynthetic ? 10.0 : 5.0;
+   double safeMinDistance = MathMax(minStopDistance, 100 * _Point) + spreadPrice * spreadMultiplier;
+   
+   if(isSynthetic)
+   {
+      // For synthetics, enforce absolute minimum of 300 points
+      safeMinDistance = MathMax(safeMinDistance, 300 * _Point);
+   }
    
    // Check and adjust SL distance if too close
    double actualSLDistance = MathAbs(price - slPrice);
-   if(actualSLDistance < safeMinDistance && safeMinDistance > 0)
+   if(actualSLDistance < safeMinDistance)
    {
       Print("WARNING: SL too close! Current: ", actualSLDistance, " | Min required: ", safeMinDistance);
-      // Increase SL distance to safe minimum
-      slDistance = safeMinDistance * 1.5;
+      // Increase SL distance to safe minimum with extra buffer
+      slDistance = safeMinDistance * 2.0;
       slPrice = isLong ? price - slDistance : price + slDistance;
       // Recalculate TP to maintain RR
       tpDistance = slDistance * TakeProfitRatio;
@@ -900,10 +936,10 @@ void OpenTrade(ENUM_SIGNAL_TYPE signal)
    
    // Check and adjust TP distance if too close
    double actualTPDistance = MathAbs(price - tpPrice);
-   if(actualTPDistance < safeMinDistance && safeMinDistance > 0)
+   if(actualTPDistance < safeMinDistance)
    {
       Print("WARNING: TP too close! Current: ", actualTPDistance, " | Min required: ", safeMinDistance);
-      tpDistance = safeMinDistance * 2;
+      tpDistance = safeMinDistance * 2.5;
       tpPrice = isLong ? price + tpDistance : price - tpDistance;
       Print("ADJUSTED: New TP distance: ", tpDistance);
    }
@@ -913,8 +949,8 @@ void OpenTrade(ENUM_SIGNAL_TYPE signal)
    tpPrice = NormalizeDouble(tpPrice, _Digits);
    
    Print("Opening ", (isLong ? "BUY" : "SELL"), " | Signal: ", EnumToString(signal));
-   Print("Price: ", price, " | SL: ", slPrice, " (dist: ", MathAbs(price - slPrice), ") | TP: ", tpPrice, " | Lot: ", lotSize);
-   Print("Min stop level: ", minStopDistance, " | Safe min: ", safeMinDistance, " | Spread: ", spread);
+   Print("Price: ", price, " | SL: ", slPrice, " (dist: ", actualSLDistance, " -> ", MathAbs(price - slPrice), ") | TP: ", tpPrice, " | Lot: ", lotSize);
+   Print("Min stop level: ", minStopDistance, " | Safe min: ", safeMinDistance, " | Spread: ", spreadPrice);
    
    // Get filling mode
    ENUM_ORDER_TYPE_FILLING fillType = GetAllowedFillingMode();
