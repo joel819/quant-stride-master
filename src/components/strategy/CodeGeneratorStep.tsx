@@ -249,6 +249,13 @@ input int CoolingOffMinutes = 60;                                      // Coolin
 input bool UseDynamicRiskReduction = true;                             // Reduce risk after losses
 input double RiskReductionFactor = 0.5;                                // Risk reduction factor per loss
 
+input group "=== Recovery Mode ==="
+input bool UseRecoveryMode = true;                                     // Enable Recovery Mode
+input double RecoveryThresholdPercent = 50.0;                          // Recovery % of peak to resume (0-100)
+input bool ResetRiskOnRecovery = true;                                 // Reset risk multiplier on recovery
+input bool GradualRecovery = true;                                     // Gradually increase risk during recovery
+input double RecoveryRiskStep = 0.25;                                  // Risk increase step per winning trade
+
 input group "=== General Settings ==="
 input int MagicNumber = 12345;                                         // Magic Number
 input bool EnableDebugMode = true;                                     // Enable detailed logging
@@ -308,6 +315,13 @@ bool drawdownHaltActive = false;
 datetime coolingOffEndTime = 0;
 int todayLossStreak = 0;
 double dynamicRiskMultiplier = 1.0;
+
+// Recovery mode tracking
+bool isInRecoveryMode = false;
+double recoveryStartBalance = 0.0;
+double recoveryTargetBalance = 0.0;
+int recoveryWinStreak = 0;
+string recoveryStatus = "NORMAL";
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -1458,8 +1472,8 @@ void UpdateDrawdownProtection()
    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    
-   // Update peak balance (high water mark)
-   if(currentBalance > peakBalance)
+   // Update peak balance (high water mark) - only when NOT in recovery mode
+   if(currentBalance > peakBalance && !isInRecoveryMode)
    {
       peakBalance = currentBalance;
       Print("NEW PEAK BALANCE: ", peakBalance);
@@ -1474,13 +1488,94 @@ void UpdateDrawdownProtection()
    // Calculate equity drawdown from starting balance
    double equityDrawdownPercent = ((startingBalance - currentEquity) / startingBalance) * 100.0;
    
+   // === RECOVERY MODE LOGIC ===
+   if(UseRecoveryMode && drawdownHaltActive)
+   {
+      // Calculate recovery progress
+      double drawdownAmount = peakBalance - recoveryStartBalance;
+      double recoveryNeeded = drawdownAmount * (RecoveryThresholdPercent / 100.0);
+      recoveryTargetBalance = recoveryStartBalance + recoveryNeeded;
+      
+      double recoveryProgress = 0.0;
+      if(recoveryNeeded > 0)
+      {
+         recoveryProgress = ((currentBalance - recoveryStartBalance) / recoveryNeeded) * 100.0;
+         recoveryProgress = MathMax(0.0, MathMin(100.0, recoveryProgress));
+      }
+      
+      // Check if recovery threshold is met
+      if(currentBalance >= recoveryTargetBalance)
+      {
+         // RECOVERY COMPLETE - Resume normal trading
+         Print("=== RECOVERY MODE COMPLETE ===");
+         Print("Balance recovered to: ", currentBalance, " | Target was: ", recoveryTargetBalance);
+         Print("Peak Balance: ", peakBalance, " | Recovery Progress: 100%");
+         
+         drawdownHaltActive = false;
+         isInRecoveryMode = false;
+         recoveryStatus = "RECOVERED";
+         
+         if(ResetRiskOnRecovery)
+         {
+            dynamicRiskMultiplier = 1.0;
+            consecutiveLosses = 0;
+            Print("Risk multiplier reset to 100%");
+         }
+         
+         // Update peak to current if we've exceeded it
+         if(currentBalance > peakBalance)
+         {
+            peakBalance = currentBalance;
+         }
+      }
+      else if(!isInRecoveryMode && currentBalance > recoveryStartBalance)
+      {
+         // Enter recovery mode - account is recovering
+         isInRecoveryMode = true;
+         recoveryWinStreak = 0;
+         recoveryStatus = "RECOVERING";
+         Print("=== ENTERING RECOVERY MODE ===");
+         Print("Current: ", currentBalance, " | Target: ", recoveryTargetBalance);
+         Print("Progress: ", DoubleToString(recoveryProgress, 1), "%");
+      }
+      else if(isInRecoveryMode)
+      {
+         // Update recovery status
+         recoveryStatus = "RECOVERING " + DoubleToString(recoveryProgress, 0) + "%";
+         
+         // Gradual risk increase during recovery
+         if(GradualRecovery && consecutiveWins > 0)
+         {
+            double recoveryRisk = 0.25 + (recoveryWinStreak * RecoveryRiskStep);
+            recoveryRisk = MathMin(1.0, recoveryRisk);
+            dynamicRiskMultiplier = recoveryRisk;
+            Print("GRADUAL RECOVERY: Risk at ", DoubleToString(recoveryRisk * 100, 0), "% after ", recoveryWinStreak, " wins");
+         }
+      }
+      
+      return; // Skip normal halt checks during recovery monitoring
+   }
+   
    // Check max total drawdown circuit breaker
    if(currentDrawdownPercent >= MaxTotalDrawdownPercent && !drawdownHaltActive)
    {
       drawdownHaltActive = true;
+      recoveryStartBalance = currentBalance; // Mark where we halted
+      isInRecoveryMode = false;
+      recoveryStatus = "HALTED";
+      
       Print("!!! DRAWDOWN HALT ACTIVATED !!!");
       Print("Current DD: ", DoubleToString(currentDrawdownPercent, 2), "% | Max Allowed: ", MaxTotalDrawdownPercent, "%");
       Print("Peak Balance: ", peakBalance, " | Current Balance: ", currentBalance);
+      
+      if(UseRecoveryMode)
+      {
+         double drawdownAmount = peakBalance - currentBalance;
+         double recoveryNeeded = drawdownAmount * (RecoveryThresholdPercent / 100.0);
+         recoveryTargetBalance = currentBalance + recoveryNeeded;
+         Print("RECOVERY MODE: Trading will resume when balance reaches ", recoveryTargetBalance);
+         Print("(", RecoveryThresholdPercent, "% recovery of ", drawdownAmount, " drawdown)");
+      }
       
       // Close all open positions when drawdown limit hit
       CloseAllPositions();
@@ -1490,10 +1585,42 @@ void UpdateDrawdownProtection()
    if(equityDrawdownPercent >= EquityStopPercent && !drawdownHaltActive)
    {
       drawdownHaltActive = true;
+      recoveryStartBalance = currentBalance;
+      isInRecoveryMode = false;
+      recoveryStatus = "EQUITY HALT";
+      
       Print("!!! EQUITY STOP ACTIVATED !!!");
       Print("Equity DD: ", DoubleToString(equityDrawdownPercent, 2), "% | Limit: ", EquityStopPercent, "%");
       
+      if(UseRecoveryMode)
+      {
+         double drawdownAmount = peakBalance - currentBalance;
+         double recoveryNeeded = drawdownAmount * (RecoveryThresholdPercent / 100.0);
+         recoveryTargetBalance = currentBalance + recoveryNeeded;
+         Print("RECOVERY MODE: Trading will resume when balance reaches ", recoveryTargetBalance);
+      }
+      
       CloseAllPositions();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Track recovery win streak                                        |
+//+------------------------------------------------------------------+
+void UpdateRecoveryWinStreak(double dealProfit)
+{
+   if(!UseRecoveryMode || !isInRecoveryMode)
+      return;
+   
+   if(dealProfit > 0)
+   {
+      recoveryWinStreak++;
+      Print("RECOVERY: Win streak = ", recoveryWinStreak);
+   }
+   else if(dealProfit < 0)
+   {
+      recoveryWinStreak = MathMax(0, recoveryWinStreak - 2); // Lose 2 streak points per loss
+      Print("RECOVERY: Win streak reduced to ", recoveryWinStreak);
    }
 }
 
@@ -1899,7 +2026,7 @@ void DrawDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, xOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, yOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 280);
-      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 360);
+      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 400);
       ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, C'15,15,25');
       ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bgName, OBJPROP_COLOR, clrDodgerBlue);
@@ -1936,9 +2063,37 @@ void DrawDashboard()
    CreateLabel(prefix + "Risk", xOffset, yOffset + lineHeight * line++, "Risk Mult: " + DoubleToString(dynamicRiskMultiplier * 100, 0) + "%", riskColor, fontSize);
    
    // Halt status
-   string haltStatus = drawdownHaltActive ? "HALTED!" : "ACTIVE";
-   color haltColor = drawdownHaltActive ? clrRed : clrLime;
+   string haltStatus = drawdownHaltActive ? (isInRecoveryMode ? "RECOVERING" : "HALTED!") : "ACTIVE";
+   color haltColor = drawdownHaltActive ? (isInRecoveryMode ? clrYellow : clrRed) : clrLime;
    CreateLabel(prefix + "Halt", xOffset, yOffset + lineHeight * line++, "Trading: " + haltStatus, haltColor, fontSize);
+   
+   // Recovery Mode Status
+   if(UseRecoveryMode)
+   {
+      color recColor = clrGray;
+      string recText = "Recovery: ";
+      
+      if(isInRecoveryMode)
+      {
+         recColor = clrYellow;
+         recText += recoveryStatus + " (Wins:" + IntegerToString(recoveryWinStreak) + ")";
+      }
+      else if(recoveryStatus == "RECOVERED")
+      {
+         recColor = clrLime;
+         recText += "COMPLETED!";
+      }
+      else if(drawdownHaltActive)
+      {
+         recColor = clrOrange;
+         recText += "Target: $" + DoubleToString(recoveryTargetBalance, 0);
+      }
+      else
+      {
+         recText += "STANDBY";
+      }
+      CreateLabel(prefix + "Recovery", xOffset, yOffset + lineHeight * line++, recText, recColor, fontSize);
+   }
    
    // Cooling off
    if(coolingOffEndTime > 0 && TimeCurrent() < coolingOffEndTime)
