@@ -421,6 +421,22 @@ class CustomEARequest(BaseModel):
     use_breakeven: bool = True
     use_trailing_stop: bool = False
     
+    # Advanced Trailing Stop
+    trailing_stop_type: str = "fixed"  # fixed, atr, step
+    trailing_start_pips: float = 30.0
+    trailing_distance_pips: float = 20.0  # for fixed
+    atr_period: int = 14
+    atr_multiplier: float = 1.5
+    step_size_pips: float = 10.0
+    step_distance_pips: float = 10.0
+    
+    # Partial Close
+    use_partial_close: bool = False
+    partial_close_percent: float = 50.0
+    partial_close_tp1_rr: float = 1.0
+    partial_close_tp2_rr: float = 2.0
+    move_sl_after_partial: bool = True
+    
     # Filters
     max_spread_points: float = 20.0
     use_trading_hours: bool = True
@@ -444,23 +460,6 @@ class CustomEAResponse(BaseModel):
 async def generate_custom_ea(request: CustomEARequest):
     """
     Generate a custom MQL5 Expert Advisor with specified settings.
-    
-    This endpoint allows you to create production-quality EAs
-    for any symbol with full configurability.
-    
-    Example request:
-    ```json
-    {
-        "ea_name": "XAUUSD_Scalper",
-        "symbol": "XAUUSD",
-        "ema_fast_period": 50,
-        "ema_slow_period": 200,
-        "rsi_buy_min": 20,
-        "rsi_buy_max": 35,
-        "risk_percent": 1.0,
-        "risk_reward_ratio": 2.0
-    }
-    ```
     """
     from templates.custom_ea_generator import CustomEAGenerator, EASettings
     from config import settings as app_settings
@@ -484,7 +483,24 @@ async def generate_custom_ea(request: CustomEARequest):
         min_sl_pips=request.min_sl_pips,
         max_sl_pips=request.max_sl_pips,
         use_breakeven=request.use_breakeven,
+        
+        # New Trailing Stop mappings
         use_trailing_stop=request.use_trailing_stop,
+        trailing_stop_type=request.trailing_stop_type,
+        trailing_start_pips=request.trailing_start_pips,
+        trailing_distance_pips=request.trailing_distance_pips,
+        atr_period=request.atr_period,
+        atr_multiplier=request.atr_multiplier,
+        step_size_pips=request.step_size_pips,
+        step_distance_pips=request.step_distance_pips,
+        
+        # Partial Close
+        use_partial_close=request.use_partial_close,
+        partial_close_percent=request.partial_close_percent,
+        partial_close_tp1_rr=request.partial_close_tp1_rr,
+        partial_close_tp2_rr=request.partial_close_tp2_rr,
+        move_sl_after_partial=request.move_sl_after_partial,
+        
         max_spread_points=request.max_spread_points,
         use_trading_hours=request.use_trading_hours,
         trading_hour_start=request.trading_hour_start,
@@ -509,7 +525,6 @@ async def generate_custom_ea(request: CustomEARequest):
         "modeling": "Every tick",
         "optimization_params": {
             "RSI_Buy_Min": f"{request.rsi_buy_min - 10} - {request.rsi_buy_min + 10} (step 5)",
-            "RSI_Buy_Max": f"{request.rsi_buy_max - 5} - {request.rsi_buy_max + 10} (step 5)",
             "RiskRewardRatio": "1.5 - 3.0 (step 0.5)",
             "EMA_Fast_Period": f"{max(10, request.ema_fast_period - 20)} - {request.ema_fast_period + 20} (step 10)",
         }
