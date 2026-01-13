@@ -186,6 +186,11 @@ input double RiskPercent = ${config.positionSizePercent || 1.0};      // Risk pe
 input double StopLossPips = ${config.stopLoss.pips || 10.0};          // Base Stop Loss (pips)
 input double TakeProfitRatio = ${config.takeProfit.ratio || 2.0};     // Take Profit Ratio
 
+input group "=== Pip Multiplier Override ==="
+input bool UseManualPipMultiplier = false;                             // Use Manual Pip Multiplier
+input double ManualPipMultiplier = 1.0;                                // Manual Pip Multiplier Value
+input double ManualMinStopPoints = 0.0;                                // Manual Min Stop (0=auto detect)
+
 input group "=== ATR Dynamic Stop Loss ==="
 input bool UseATRStops = true;                                         // Use ATR-based stops
 input int ATRPeriod = 14;                                              // ATR Period
@@ -358,117 +363,151 @@ int OnInit()
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    string symbolName = _Symbol;
    
-   // Check if this is a synthetic index (Volatility, Boom, Crash, Jump, Step, Range)
-   bool isSynthetic = (StringFind(symbolName, "Volatility") >= 0 ||
-                       StringFind(symbolName, "Vol") >= 0 ||
-                       StringFind(symbolName, "Boom") >= 0 ||
-                       StringFind(symbolName, "Crash") >= 0 ||
-                       StringFind(symbolName, "Jump") >= 0 ||
-                       StringFind(symbolName, "Step") >= 0 ||
-                       StringFind(symbolName, "Range") >= 0 ||
-                       StringFind(symbolName, "1 Index") >= 0 ||
-                       StringFind(symbolName, "10 Index") >= 0 ||
-                       StringFind(symbolName, "25 Index") >= 0 ||
-                       StringFind(symbolName, "50 Index") >= 0 ||
-                       StringFind(symbolName, "75 Index") >= 0 ||
-                       StringFind(symbolName, "100 Index") >= 0 ||
-                       StringFind(symbolName, "200 Index") >= 0 ||
-                       StringFind(symbolName, "300 Index") >= 0);
-   
-   // Check if this is a stock index (NAS100, US30, etc.)
-   bool isStockIndex = (StringFind(symbolName, "NAS") >= 0 ||
-                        StringFind(symbolName, "US30") >= 0 ||
-                        StringFind(symbolName, "US500") >= 0 ||
-                        StringFind(symbolName, "SPX") >= 0 ||
-                        StringFind(symbolName, "GER") >= 0 ||
-                        StringFind(symbolName, "UK100") >= 0 ||
-                        StringFind(symbolName, "JP225") >= 0);
-   
-   // Get minimum stop level from broker FIRST
-   long minStopPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   double minStopLevel = minStopPoints * _Point;
-   double currentSpread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   double spreadPrice = currentSpread * _Point;
-   
-   Print("=== STOP LEVEL ANALYSIS ===");
-   Print("Symbol: ", _Symbol, " | Digits: ", digits);
-   Print("Min stop level (points): ", minStopPoints, " | Min stop level (price): ", minStopLevel);
-   Print("Current spread (points): ", currentSpread, " | Spread (price): ", spreadPrice);
-   
-   // CRITICAL FIX: For synthetic indices, calculate MINIMUM safe stop first
-   // V75 and similar synthetics require 200-1000+ point stops depending on broker
-   double absoluteMinStopPrice = 0;
-   
-   if(isSynthetic)
+   // === MANUAL PIP MULTIPLIER OVERRIDE ===
+   if(UseManualPipMultiplier)
    {
-      Print("Detected SYNTHETIC INDEX");
+      pipMultiplier = ManualPipMultiplier;
+      Print("=== MANUAL PIP MULTIPLIER OVERRIDE ===");
+      Print("Using manual pip multiplier: ", pipMultiplier);
       
-      // For synthetics, we need to ensure stops are FAR enough
-      // Minimum should be at least: max(broker_min_stop, 200 points) + spread * 5
-      double minRequired = MathMax((double)minStopPoints, 200.0);
-      absoluteMinStopPrice = (minRequired + currentSpread * 5) * _Point;
-      
-      // pipMultiplier for synthetics: 1 pip = 1 point
-      pipMultiplier = 1.0;
-      
-      // Now ensure StopLossPips * pipMultiplier * _Point >= absoluteMinStopPrice
-      double calculatedDistance = StopLossPips * pipMultiplier * _Point;
-      
-      if(calculatedDistance < absoluteMinStopPrice)
+      if(ManualMinStopPoints > 0)
       {
-         // Increase multiplier to make stops safe
-         double requiredMultiplier = absoluteMinStopPrice / (StopLossPips * _Point);
-         pipMultiplier = MathCeil(requiredMultiplier * 1.5); // 50% safety buffer
-         Print("SYNTHETIC: Increased pipMultiplier to ", pipMultiplier, " for safe stops");
+         Print("Using manual min stop points: ", ManualMinStopPoints);
       }
       
-      Print("Absolute min stop price: ", absoluteMinStopPrice, " | Current calculated: ", StopLossPips * pipMultiplier * _Point);
-   }
-   else if(isStockIndex)
-   {
-      pipMultiplier = 1.0;
-      absoluteMinStopPrice = (MathMax((double)minStopPoints, 50.0) + currentSpread * 3) * _Point;
+      // Even with manual override, do a basic safety check
+      long minStopPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      double effectiveMinStop = (ManualMinStopPoints > 0) ? ManualMinStopPoints : (double)minStopPoints;
+      double testDistance = StopLossPips * pipMultiplier;
       
-      double calculatedDistance = StopLossPips * pipMultiplier * _Point;
-      if(calculatedDistance < absoluteMinStopPrice)
+      if(testDistance < effectiveMinStop)
       {
-         double requiredMultiplier = absoluteMinStopPrice / (StopLossPips * _Point);
-         pipMultiplier = MathCeil(requiredMultiplier * 1.5);
-         Print("STOCK INDEX: Increased pipMultiplier to ", pipMultiplier, " for safe stops");
+         Print("WARNING: Manual settings may cause invalid stops!");
+         Print("Calculated SL (", testDistance, " points) < Min required (", effectiveMinStop, " points)");
+         Print("Consider increasing ManualPipMultiplier or StopLossPips");
       }
-      
-      Print("Detected STOCK INDEX - using pipMultiplier: ", pipMultiplier);
-   }
-   else if(digits == 3 || digits == 5)
-   {
-      pipMultiplier = 10.0;
-   }
-   else if(digits == 2)
-   {
-      pipMultiplier = 1.0;
+      else
+      {
+         Print("Manual settings OK: SL distance ", testDistance, " >= Min ", effectiveMinStop);
+      }
+      Print("=== END MANUAL OVERRIDE ===");
    }
    else
    {
-      pipMultiplier = 1.0;
-   }
-   
-   // FINAL SAFETY CHECK: Always verify against broker minimum
-   double testDistance = StopLossPips * _Point * pipMultiplier;
-   double safeMinStop = minStopLevel + spreadPrice * 5; // Add generous spread buffer
-   
-   if(testDistance < safeMinStop && safeMinStop > 0)
-   {
-      double requiredMultiplier = (safeMinStop / (_Point * StopLossPips)) * 2.0; // Double buffer
-      if(requiredMultiplier > pipMultiplier)
+      // === AUTO-DETECT PIP MULTIPLIER ===
+      
+      // Check if this is a synthetic index (Volatility, Boom, Crash, Jump, Step, Range)
+      bool isSynthetic = (StringFind(symbolName, "Volatility") >= 0 ||
+                          StringFind(symbolName, "Vol") >= 0 ||
+                          StringFind(symbolName, "Boom") >= 0 ||
+                          StringFind(symbolName, "Crash") >= 0 ||
+                          StringFind(symbolName, "Jump") >= 0 ||
+                          StringFind(symbolName, "Step") >= 0 ||
+                          StringFind(symbolName, "Range") >= 0 ||
+                          StringFind(symbolName, "1 Index") >= 0 ||
+                          StringFind(symbolName, "10 Index") >= 0 ||
+                          StringFind(symbolName, "25 Index") >= 0 ||
+                          StringFind(symbolName, "50 Index") >= 0 ||
+                          StringFind(symbolName, "75 Index") >= 0 ||
+                          StringFind(symbolName, "100 Index") >= 0 ||
+                          StringFind(symbolName, "200 Index") >= 0 ||
+                          StringFind(symbolName, "300 Index") >= 0);
+      
+      // Check if this is a stock index (NAS100, US30, etc.)
+      bool isStockIndex = (StringFind(symbolName, "NAS") >= 0 ||
+                           StringFind(symbolName, "US30") >= 0 ||
+                           StringFind(symbolName, "US500") >= 0 ||
+                           StringFind(symbolName, "SPX") >= 0 ||
+                           StringFind(symbolName, "GER") >= 0 ||
+                           StringFind(symbolName, "UK100") >= 0 ||
+                           StringFind(symbolName, "JP225") >= 0);
+      
+      // Get minimum stop level from broker FIRST
+      long minStopPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      double minStopLevel = minStopPoints * _Point;
+      double currentSpread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+      double spreadPrice = currentSpread * _Point;
+      
+      Print("=== STOP LEVEL ANALYSIS (AUTO) ===");
+      Print("Symbol: ", _Symbol, " | Digits: ", digits);
+      Print("Min stop level (points): ", minStopPoints, " | Min stop level (price): ", minStopLevel);
+      Print("Current spread (points): ", currentSpread, " | Spread (price): ", spreadPrice);
+      
+      // CRITICAL FIX: For synthetic indices, calculate MINIMUM safe stop first
+      // V75 and similar synthetics require 200-1000+ point stops depending on broker
+      double absoluteMinStopPrice = 0;
+      
+      if(isSynthetic)
       {
-         pipMultiplier = MathCeil(requiredMultiplier);
-         Print("*** FINAL ADJUSTMENT - pipMultiplier increased to: ", pipMultiplier);
+         Print("Detected SYNTHETIC INDEX");
+         
+         // For synthetics, we need to ensure stops are FAR enough
+         // Minimum should be at least: max(broker_min_stop, 200 points) + spread * 5
+         double minRequired = MathMax((double)minStopPoints, 200.0);
+         absoluteMinStopPrice = (minRequired + currentSpread * 5) * _Point;
+         
+         // pipMultiplier for synthetics: 1 pip = 1 point
+         pipMultiplier = 1.0;
+         
+         // Now ensure StopLossPips * pipMultiplier * _Point >= absoluteMinStopPrice
+         double calculatedDistance = StopLossPips * pipMultiplier * _Point;
+         
+         if(calculatedDistance < absoluteMinStopPrice)
+         {
+            // Increase multiplier to make stops safe
+            double requiredMultiplier = absoluteMinStopPrice / (StopLossPips * _Point);
+            pipMultiplier = MathCeil(requiredMultiplier * 1.5); // 50% safety buffer
+            Print("SYNTHETIC: Increased pipMultiplier to ", pipMultiplier, " for safe stops");
+         }
+         
+         Print("Absolute min stop price: ", absoluteMinStopPrice, " | Current calculated: ", StopLossPips * pipMultiplier * _Point);
       }
+      else if(isStockIndex)
+      {
+         pipMultiplier = 1.0;
+         absoluteMinStopPrice = (MathMax((double)minStopPoints, 50.0) + currentSpread * 3) * _Point;
+         
+         double calculatedDistance = StopLossPips * pipMultiplier * _Point;
+         if(calculatedDistance < absoluteMinStopPrice)
+         {
+            double requiredMultiplier = absoluteMinStopPrice / (StopLossPips * _Point);
+            pipMultiplier = MathCeil(requiredMultiplier * 1.5);
+            Print("STOCK INDEX: Increased pipMultiplier to ", pipMultiplier, " for safe stops");
+         }
+         
+         Print("Detected STOCK INDEX - using pipMultiplier: ", pipMultiplier);
+      }
+      else if(digits == 3 || digits == 5)
+      {
+         pipMultiplier = 10.0;
+      }
+      else if(digits == 2)
+      {
+         pipMultiplier = 1.0;
+      }
+      else
+      {
+         pipMultiplier = 1.0;
+      }
+      
+      // FINAL SAFETY CHECK: Always verify against broker minimum
+      double testDistance = StopLossPips * _Point * pipMultiplier;
+      double safeMinStop = minStopLevel + spreadPrice * 5; // Add generous spread buffer
+      
+      if(testDistance < safeMinStop && safeMinStop > 0)
+      {
+         double requiredMultiplier = (safeMinStop / (_Point * StopLossPips)) * 2.0; // Double buffer
+         if(requiredMultiplier > pipMultiplier)
+         {
+            pipMultiplier = MathCeil(requiredMultiplier);
+            Print("*** FINAL ADJUSTMENT - pipMultiplier increased to: ", pipMultiplier);
+         }
+      }
+      
+      Print("Final pip multiplier: ", pipMultiplier);
+      Print("Final SL distance: ", StopLossPips * _Point * pipMultiplier, " | Safe min: ", safeMinStop);
+      Print("=== END STOP LEVEL ANALYSIS ===");
    }
-   
-   Print("Final pip multiplier: ", pipMultiplier);
-   Print("Final SL distance: ", StopLossPips * _Point * pipMultiplier, " | Safe min: ", safeMinStop);
-   Print("=== END STOP LEVEL ANALYSIS ===");
    
    // Initialize indicators
 ${generateIndicatorInit()}
