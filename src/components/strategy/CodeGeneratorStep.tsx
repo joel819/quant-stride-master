@@ -256,6 +256,23 @@ input bool ResetRiskOnRecovery = true;                                 // Reset 
 input bool GradualRecovery = true;                                     // Gradually increase risk during recovery
 input double RecoveryRiskStep = 0.25;                                  // Risk increase step per winning trade
 
+input group "=== Time-Based Filters ==="
+input bool UseTimeFilter = true;                                       // Enable Time-Based Filters
+input int TradingStartHour = 2;                                        // Trading Start Hour (Server Time)
+input int TradingStartMinute = 0;                                      // Trading Start Minute
+input int TradingEndHour = 22;                                         // Trading End Hour (Server Time)
+input int TradingEndMinute = 0;                                        // Trading End Minute
+input bool AvoidMarketOpen = true;                                     // Avoid Market Open Period
+input int MarketOpenMinutes = 15;                                      // Minutes to avoid after market open
+input bool AvoidMarketClose = true;                                    // Avoid Market Close Period
+input int MarketCloseMinutes = 15;                                     // Minutes to avoid before market close
+input bool AvoidLowLiquidity = true;                                   // Avoid Low Liquidity Periods
+input int LunchBreakStartHour = 11;                                    // Lunch Break Start (11:00-13:00 server)
+input int LunchBreakEndHour = 13;                                      // Lunch Break End
+input bool AvoidSundayMonday = true;                                   // Avoid Sunday Open & Monday Pre-Session
+input bool AvoidFridayClose = true;                                    // Avoid Friday Close Session
+input int FridayCloseHour = 20;                                        // Friday Stop Trading Hour
+
 input group "=== General Settings ==="
 input int MagicNumber = 12345;                                         // Magic Number
 input bool EnableDebugMode = true;                                     // Enable detailed logging
@@ -1679,8 +1696,136 @@ bool IsValidSession()
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
    int hour = dt.hour;
+   int minute = dt.min;
+   int dayOfWeek = dt.day_of_week;
    
+   // === TIME-BASED FILTERS ===
+   if(UseTimeFilter)
+   {
+      // Check trading hours window
+      int currentMinutes = hour * 60 + minute;
+      int startMinutes = TradingStartHour * 60 + TradingStartMinute;
+      int endMinutes = TradingEndHour * 60 + TradingEndMinute;
+      
+      if(currentMinutes < startMinutes || currentMinutes >= endMinutes)
+      {
+         if(EnableDebugMode) Print("TIME FILTER: Outside trading hours (", hour, ":", minute, ")");
+         return false;
+      }
+      
+      // Avoid Sunday open (low liquidity, gaps)
+      if(AvoidSundayMonday && dayOfWeek == 0)
+      {
+         if(EnableDebugMode) Print("TIME FILTER: Sunday - market closed or low liquidity");
+         return false;
+      }
+      
+      // Avoid Monday pre-session (first 2 hours typically)
+      if(AvoidSundayMonday && dayOfWeek == 1 && hour < 2)
+      {
+         if(EnableDebugMode) Print("TIME FILTER: Monday pre-session - avoiding first 2 hours");
+         return false;
+      }
+      
+      // Avoid Friday close session
+      if(AvoidFridayClose && dayOfWeek == 5 && hour >= FridayCloseHour)
+      {
+         if(EnableDebugMode) Print("TIME FILTER: Friday close session - avoiding after ", FridayCloseHour, ":00");
+         return false;
+      }
+      
+      // Avoid market open period (first X minutes of the day)
+      if(AvoidMarketOpen)
+      {
+         int tradingStartTotalMin = TradingStartHour * 60 + TradingStartMinute;
+         int marketOpenEnd = tradingStartTotalMin + MarketOpenMinutes;
+         
+         if(currentMinutes >= tradingStartTotalMin && currentMinutes < marketOpenEnd)
+         {
+            if(EnableDebugMode) Print("TIME FILTER: Market open period - waiting ", MarketOpenMinutes, " minutes");
+            return false;
+         }
+      }
+      
+      // Avoid market close period (last X minutes before close)
+      if(AvoidMarketClose)
+      {
+         int marketCloseStart = endMinutes - MarketCloseMinutes;
+         
+         if(currentMinutes >= marketCloseStart && currentMinutes < endMinutes)
+         {
+            if(EnableDebugMode) Print("TIME FILTER: Market close period - last ", MarketCloseMinutes, " minutes");
+            return false;
+         }
+      }
+      
+      // Avoid low liquidity lunch break (typically 11:00-13:00)
+      if(AvoidLowLiquidity)
+      {
+         if(hour >= LunchBreakStartHour && hour < LunchBreakEndHour)
+         {
+            if(EnableDebugMode) Print("TIME FILTER: Lunch break - low liquidity period");
+            return false;
+         }
+      }
+   }
+   
+   // === SESSION FILTERS (existing) ===
 ${config.sessions.length === 0 ? '   return true; // No session filter' : generateSessionCheck()}
+}
+
+//+------------------------------------------------------------------+
+//| Get time filter status for dashboard                             |
+//+------------------------------------------------------------------+
+string GetTimeFilterStatus(MqlDateTime &dt)
+{
+   if(!UseTimeFilter)
+      return "OFF";
+   
+   int hour = dt.hour;
+   int minute = dt.min;
+   int dayOfWeek = dt.day_of_week;
+   int currentMinutes = hour * 60 + minute;
+   int startMinutes = TradingStartHour * 60 + TradingStartMinute;
+   int endMinutes = TradingEndHour * 60 + TradingEndMinute;
+   
+   // Check outside trading hours
+   if(currentMinutes < startMinutes || currentMinutes >= endMinutes)
+      return "CLOSED";
+   
+   // Check Sunday
+   if(AvoidSundayMonday && dayOfWeek == 0)
+      return "SUNDAY";
+   
+   // Check Monday pre-session
+   if(AvoidSundayMonday && dayOfWeek == 1 && hour < 2)
+      return "MON PRE";
+   
+   // Check Friday close
+   if(AvoidFridayClose && dayOfWeek == 5 && hour >= FridayCloseHour)
+      return "FRI CLOSE";
+   
+   // Check market open period
+   if(AvoidMarketOpen)
+   {
+      int marketOpenEnd = startMinutes + MarketOpenMinutes;
+      if(currentMinutes >= startMinutes && currentMinutes < marketOpenEnd)
+         return "MKT OPEN";
+   }
+   
+   // Check market close period
+   if(AvoidMarketClose)
+   {
+      int marketCloseStart = endMinutes - MarketCloseMinutes;
+      if(currentMinutes >= marketCloseStart)
+         return "MKT CLOSE";
+   }
+   
+   // Check lunch break
+   if(AvoidLowLiquidity && hour >= LunchBreakStartHour && hour < LunchBreakEndHour)
+      return "LUNCH";
+   
+   return "OPEN";
 }
 
 //+------------------------------------------------------------------+
@@ -2026,7 +2171,7 @@ void DrawDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, xOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, yOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 280);
-      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 400);
+      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 420);
       ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, C'15,15,25');
       ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bgName, OBJPROP_COLOR, clrDodgerBlue);
@@ -2115,6 +2260,16 @@ void DrawDashboard()
    
    color newsColor = (isNewsTime) ? clrRed : clrLime;
    CreateLabel(prefix + "News", xOffset, yOffset + lineHeight * line++, "News: " + newsStatus, newsColor, fontSize);
+   
+   // Time Filter Status
+   if(UseTimeFilter)
+   {
+      MqlDateTime dtNow;
+      TimeToStruct(TimeCurrent(), dtNow);
+      string timeFilterStatus = GetTimeFilterStatus(dtNow);
+      color timeColor = (timeFilterStatus == "OPEN") ? clrLime : clrOrange;
+      CreateLabel(prefix + "Time", xOffset, yOffset + lineHeight * line++, "Time Filter: " + timeFilterStatus, timeColor, fontSize);
+   }
    
    CreateLabel(prefix + "MM", xOffset, yOffset + lineHeight * line++, "MM: " + mmStatus + " (W:" + IntegerToString(consecutiveWins) + "/L:" + IntegerToString(consecutiveLosses) + ")", clrAqua, fontSize);
    
