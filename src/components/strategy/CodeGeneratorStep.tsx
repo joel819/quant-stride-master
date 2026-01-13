@@ -186,6 +186,14 @@ input double RiskPercent = ${config.positionSizePercent || 1.0};      // Risk pe
 input double StopLossPips = ${config.stopLoss.pips || 10.0};          // Base Stop Loss (pips)
 input double TakeProfitRatio = ${config.takeProfit.ratio || 2.0};     // Take Profit Ratio
 
+input group "=== ATR Dynamic Stop Loss ==="
+input bool UseATRStops = true;                                         // Use ATR-based stops
+input int ATRPeriod = 14;                                              // ATR Period
+input double ATRMultiplierSL = 2.0;                                    // ATR Multiplier for SL
+input double ATRMultiplierTP = 3.0;                                    // ATR Multiplier for TP
+input double ATRMinStopPips = 10.0;                                    // Minimum SL (pips, fallback)
+input double ATRMaxStopPips = 100.0;                                   // Maximum SL (pips, cap)
+
 input group "=== Multi-Timeframe Settings ==="
 input bool UseMTF = true;                                              // Enable Multi-Timeframe Analysis
 input bool RequireHTFAlignment = true;                                 // Require HTF trend alignment
@@ -287,6 +295,10 @@ double originalPositionSize = 0.0;
 // Structure tracking for breakouts
 double recentHigh = 0.0;
 double recentLow = 0.0;
+
+// ATR-based stop loss tracking
+int handle_atr_dynamic;
+double currentATR = 0.0;
 
 // Drawdown protection tracking
 double startingBalance = 0.0;
@@ -429,6 +441,20 @@ int OnInit()
    
    // Initialize indicators
 ${generateIndicatorInit()}
+   
+   // Initialize ATR for dynamic stops
+   if(UseATRStops)
+   {
+      handle_atr_dynamic = iATR(_Symbol, ${getTimeframePeriod()}, ATRPeriod);
+      if(handle_atr_dynamic == INVALID_HANDLE)
+      {
+         Print("WARNING: ATR for dynamic stops failed to initialize. Using fixed stops.");
+      }
+      else
+      {
+         Print("ATR Dynamic Stops initialized: Period=", ATRPeriod, " | SL Mult=", ATRMultiplierSL, " | TP Mult=", ATRMultiplierTP);
+      }
+   }
    
    // Initialize structure tracking
    UpdateMarketStructure();
@@ -928,6 +954,60 @@ void CheckNewsCalendar()
 }
 
 //+------------------------------------------------------------------+
+//| Get current ATR value for dynamic stops                          |
+//+------------------------------------------------------------------+
+double GetATRValue()
+{
+   if(!UseATRStops || handle_atr_dynamic == INVALID_HANDLE)
+      return 0.0;
+   
+   double atrBuffer[];
+   ArraySetAsSeries(atrBuffer, true);
+   
+   if(CopyBuffer(handle_atr_dynamic, 0, 0, 3, atrBuffer) < 3)
+   {
+      Print("WARNING: Failed to get ATR value");
+      return 0.0;
+   }
+   
+   currentATR = atrBuffer[1]; // Use confirmed ATR (previous bar)
+   return currentATR;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate ATR-based stop loss in pips                            |
+//+------------------------------------------------------------------+
+double CalculateATRStopPips()
+{
+   double atrValue = GetATRValue();
+   
+   if(atrValue <= 0)
+   {
+      Print("ATR not available, using fixed StopLossPips: ", StopLossPips);
+      return StopLossPips;
+   }
+   
+   double pipValue = _Point * pipMultiplier;
+   
+   // Convert ATR to pips
+   double atrPips = atrValue / pipValue;
+   
+   // Apply multiplier
+   double atrStopPips = atrPips * ATRMultiplierSL;
+   
+   // Apply min/max caps
+   atrStopPips = MathMax(ATRMinStopPips, atrStopPips);
+   atrStopPips = MathMin(ATRMaxStopPips, atrStopPips);
+   
+   Print("=== ATR DYNAMIC STOP ===");
+   Print("ATR Value: ", DoubleToString(atrValue, _Digits), " | ATR in Pips: ", DoubleToString(atrPips, 1));
+   Print("Multiplier: ", ATRMultiplierSL, " | Calculated SL: ", DoubleToString(atrStopPips, 1), " pips");
+   Print("Min/Max Caps: ", ATRMinStopPips, " / ", ATRMaxStopPips, " | Final SL: ", DoubleToString(atrStopPips, 1), " pips");
+   
+   return atrStopPips;
+}
+
+//+------------------------------------------------------------------+
 //| Open trade with advanced money management                        |
 //+------------------------------------------------------------------+
 void OpenTrade(ENUM_SIGNAL_TYPE signal)
@@ -935,19 +1015,48 @@ void OpenTrade(ENUM_SIGNAL_TYPE signal)
    // Calculate lot size with money management
    double lotSize = CalculateLotSize();
    
-   // Declare stop loss and take profit
+   // === ATR-BASED DYNAMIC STOP LOSS ===
    double stopLossPips = StopLossPips;
-   double takeProfitPips = stopLossPips * TakeProfitRatio;
+   double takeProfitPips = 0.0;
+   
+   if(UseATRStops)
+   {
+      // Get ATR-based stop loss
+      stopLossPips = CalculateATRStopPips();
+      
+      // Calculate TP using ATR multiplier ratio
+      double atrValue = GetATRValue();
+      if(atrValue > 0)
+      {
+         double pipValue = _Point * pipMultiplier;
+         double atrPips = atrValue / pipValue;
+         takeProfitPips = atrPips * ATRMultiplierTP;
+         
+         // Apply reasonable cap to TP as well
+         takeProfitPips = MathMax(takeProfitPips, stopLossPips * TakeProfitRatio);
+         takeProfitPips = MathMin(takeProfitPips, ATRMaxStopPips * 3);
+         
+         Print("ATR-based TP: ", DoubleToString(takeProfitPips, 1), " pips (ATR mult: ", ATRMultiplierTP, ")");
+      }
+      else
+      {
+         takeProfitPips = stopLossPips * TakeProfitRatio;
+      }
+   }
+   else
+   {
+      takeProfitPips = stopLossPips * TakeProfitRatio;
+   }
    
    // Adjust SL/TP based on signal type
    if(signal == SIGNAL_BREAKOUT_LONG || signal == SIGNAL_BREAKOUT_SHORT)
    {
-      stopLossPips *= 1.5;  // Wider stops for breakouts
-      takeProfitPips = stopLossPips * TakeProfitRatio * 1.2; // Better RR for breakouts
+      stopLossPips *= 1.2;  // Slightly wider stops for breakouts
+      takeProfitPips *= 1.3; // Better RR for breakouts
    }
    else if(signal == SIGNAL_REVERSAL_LONG || signal == SIGNAL_REVERSAL_SHORT)
    {
-      takeProfitPips = stopLossPips * TakeProfitRatio * 1.5; // Better RR for reversals
+      takeProfitPips *= 1.2; // Better RR for reversals
    }
    
    // Determine direction
@@ -1759,6 +1868,7 @@ void DrawDashboard()
    string htfStatus = UseMTF ? (htfTrend == 1 ? "BULL" : htfTrend == -1 ? "BEAR" : "NEUTRAL") : "OFF";
    string mmStatus = EnumToString(MoneyManagement);
    double currentProfitPips = 0.0;
+   string atrStatus = UseATRStops ? DoubleToString(currentATR, _Digits) : "OFF";
    
    if(SelectOurPosition())
    {
@@ -1789,7 +1899,7 @@ void DrawDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, xOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, yOffset - 10);
       ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 280);
-      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 340);
+      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 360);
       ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, C'15,15,25');
       ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bgName, OBJPROP_COLOR, clrDodgerBlue);
@@ -1852,6 +1962,10 @@ void DrawDashboard()
    CreateLabel(prefix + "News", xOffset, yOffset + lineHeight * line++, "News: " + newsStatus, newsColor, fontSize);
    
    CreateLabel(prefix + "MM", xOffset, yOffset + lineHeight * line++, "MM: " + mmStatus + " (W:" + IntegerToString(consecutiveWins) + "/L:" + IntegerToString(consecutiveLosses) + ")", clrAqua, fontSize);
+   
+   // ATR Dynamic Stops
+   color atrColor = UseATRStops ? clrLime : clrGray;
+   CreateLabel(prefix + "ATR", xOffset, yOffset + lineHeight * line++, "ATR Stops: " + atrStatus, atrColor, fontSize);
    
    // Protection
    line++;
