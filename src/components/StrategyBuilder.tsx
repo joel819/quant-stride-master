@@ -1,37 +1,14 @@
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ConfigurationStep } from "./strategy/ConfigurationStep";
-import { IndicatorsStep } from "./strategy/IndicatorsStep";
-import { RiskManagementStep } from "./strategy/RiskManagementStep";
-import { PerformanceAnalyzerStep } from "./strategy/PerformanceAnalyzerStep";
-import { CodeGeneratorStep } from "./strategy/CodeGeneratorStep";
-import { BacktestGuideStep } from "./strategy/BacktestGuideStep";
-import { TemplateSelector } from "./strategy/TemplateSelector";
-import { SaveTemplateDialog } from "./SaveTemplateDialog";
-import { StrategyConfig } from "@/types/strategy";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "./ui/button";
+import CustomEAGenerator from "@/pages/CustomEAGenerator";
 import { LogOut, LogIn } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 export const StrategyBuilder = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [config, setConfig] = useState<StrategyConfig>({
-    instruments: ["EURUSD", "GBPUSD"],
-    timeframe: "1m",
-    accountSize: 100,
-    dailyTarget: 150,
-    sessions: ["london", "newyork", "overlap"],
-    indicators: [],
-    entries: [],
-    exits: [],
-    stopLoss: { type: "fixed", pips: 5 },
-    takeProfit: { type: "rr", ratio: 2 },
-    maxDailyLoss: 20,
-    positionSizePercent: 2,
-  });
 
   const handleSignOut = async () => {
     await signOut();
@@ -53,13 +30,10 @@ export const StrategyBuilder = () => {
             </div>
             <div className="flex gap-2">
               {user ? (
-                <>
-                  <SaveTemplateDialog config={config} />
-                  <Button variant="outline" onClick={handleSignOut}>
-                    <LogOut className="w-4 h-4 mr-2" />
-                    Sign Out
-                  </Button>
-                </>
+                <Button variant="outline" onClick={handleSignOut}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sign Out
+                </Button>
               ) : (
                 <Button variant="outline" onClick={() => navigate('/auth')}>
                   <LogIn className="w-4 h-4 mr-2" />
@@ -70,48 +44,8 @@ export const StrategyBuilder = () => {
           </div>
         </div>
 
-        <Card className="card-elevated bg-card/50 backdrop-blur-sm border-border">
-          <Tabs defaultValue="templates" className="w-full">
-            <TabsList className="w-full grid grid-cols-7 bg-secondary/50">
-              <TabsTrigger value="templates">Templates</TabsTrigger>
-              <TabsTrigger value="config">Configuration</TabsTrigger>
-              <TabsTrigger value="indicators">Indicators</TabsTrigger>
-              <TabsTrigger value="risk">Risk</TabsTrigger>
-              <TabsTrigger value="performance">Performance</TabsTrigger>
-              <TabsTrigger value="code">Code</TabsTrigger>
-              <TabsTrigger value="backtest">Backtest</TabsTrigger>
-            </TabsList>
-
-            <div className="p-6">
-              <TabsContent value="templates">
-                <TemplateSelector onSelectTemplate={setConfig} />
-              </TabsContent>
-
-              <TabsContent value="config">
-                <ConfigurationStep config={config} setConfig={setConfig} />
-              </TabsContent>
-
-              <TabsContent value="indicators">
-                <IndicatorsStep config={config} setConfig={setConfig} />
-              </TabsContent>
-
-              <TabsContent value="risk">
-                <RiskManagementStep config={config} setConfig={setConfig} />
-              </TabsContent>
-
-              <TabsContent value="performance">
-                <PerformanceAnalyzerStep config={config} />
-              </TabsContent>
-
-              <TabsContent value="code">
-                <CodeGeneratorStep config={config} />
-              </TabsContent>
-
-              <TabsContent value="backtest">
-                <BacktestGuideStep />
-              </TabsContent>
-            </div>
-          </Tabs>
+        <Card className="card-elevated bg-card/50 backdrop-blur-sm border-border p-6">
+          <CustomEAGenerator isEmbedded={true} />
         </Card>
       </div>
     </div>

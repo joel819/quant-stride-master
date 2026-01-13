@@ -1,0 +1,521 @@
+import { useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/components/ui/use-toast';
+import { Loader2, Download, Copy, Sparkles, TrendingUp, Shield, Clock } from 'lucide-react';
+
+interface EASettings {
+    ea_name: string;
+    symbol: string;
+    ema_fast_period: number;
+    ema_slow_period: number;
+    use_trend_filter: boolean;
+    rsi_period: number;
+    rsi_buy_min: number;
+    rsi_buy_max: number;
+    rsi_sell_min: number;
+    rsi_sell_max: number;
+    use_macd_confirmation: boolean;
+    pullback_distance_pips: number;
+    risk_percent: number;
+    risk_reward_ratio: number;
+    min_sl_pips: number;
+    max_sl_pips: number;
+    use_breakeven: boolean;
+    use_trailing_stop: boolean;
+    max_spread_points: number;
+    use_trading_hours: boolean;
+    trading_hour_start: number;
+    trading_hour_end: number;
+    use_news_filter: boolean;
+}
+
+interface Preset {
+    name: string;
+    symbol: string;
+    description: string;
+    settings: Partial<EASettings>;
+}
+
+const API_BASE = 'http://localhost:8000/api';
+
+const defaultSettings: EASettings = {
+    ea_name: 'MyCustomEA',
+    symbol: 'EURUSD',
+    ema_fast_period: 50,
+    ema_slow_period: 200,
+    use_trend_filter: true,
+    rsi_period: 14,
+    rsi_buy_min: 30,
+    rsi_buy_max: 45,
+    rsi_sell_min: 55,
+    rsi_sell_max: 70,
+    use_macd_confirmation: true,
+    pullback_distance_pips: 30,
+    risk_percent: 1.0,
+    risk_reward_ratio: 2.0,
+    min_sl_pips: 20,
+    max_sl_pips: 100,
+    use_breakeven: true,
+    use_trailing_stop: false,
+    max_spread_points: 20,
+    use_trading_hours: true,
+    trading_hour_start: 8,
+    trading_hour_end: 18,
+    use_news_filter: true,
+};
+
+interface Props {
+    isEmbedded?: boolean;
+}
+
+export default function CustomEAGenerator({ isEmbedded = false }: Props) {
+    const [settings, setSettings] = useState<EASettings>(defaultSettings);
+    const [presets, setPresets] = useState<Preset[]>([]);
+    const [generatedCode, setGeneratedCode] = useState<string>('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [filePath, setFilePath] = useState<string>('');
+    const { toast } = useToast();
+
+    // Fetch presets on mount
+    useState(() => {
+        fetch(`${API_BASE}/presets`)
+            .then(res => res.json())
+            .then(data => setPresets(data.presets || []))
+            .catch(err => console.error('Failed to load presets:', err));
+    });
+
+    const handlePresetSelect = (presetName: string) => {
+        const preset = presets.find(p => p.name === presetName);
+        if (preset) {
+            setSettings({
+                ...defaultSettings,
+                ...preset.settings,
+                ea_name: preset.name,
+                symbol: preset.symbol,
+            });
+            toast({
+                title: 'Preset Loaded',
+                description: `${preset.name} settings applied`,
+            });
+        }
+    };
+
+    const generateEA = async () => {
+        setIsLoading(true);
+        try {
+            const response = await fetch(`${API_BASE}/generate-custom-ea`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings),
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                setGeneratedCode(data.mql5_code);
+                setFilePath(data.file_path);
+                toast({
+                    title: '✅ EA Generated Successfully!',
+                    description: `${data.ea_name}.mq5 (${data.code_length.toLocaleString()} chars)`,
+                });
+            } else {
+                throw new Error(data.message || 'Generation failed');
+            }
+        } catch (error) {
+            toast({
+                title: 'Error',
+                description: error instanceof Error ? error.message : 'Failed to generate EA',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const copyCode = () => {
+        navigator.clipboard.writeText(generatedCode);
+        toast({ title: 'Copied!', description: 'Code copied to clipboard' });
+    };
+
+    const downloadCode = () => {
+        const blob = new Blob([generatedCode], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${settings.ea_name}.mq5`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const content = (
+        <div className="max-w-7xl mx-auto space-y-6">
+            {/* Header - Only show if not embedded */}
+            {!isEmbedded && (
+                <div className="text-center space-y-2">
+                    <h1 className="text-4xl font-bold text-white flex items-center justify-center gap-3">
+                        <Sparkles className="h-10 w-10 text-yellow-400" />
+                        Custom EA Generator
+                    </h1>
+                    <p className="text-slate-300">
+                        Generate production-quality Expert Advisors for any symbol
+                    </p>
+                </div>
+            )}
+
+            {/* Presets */}
+            <Card className="bg-slate-800/50 border-slate-700">
+                <CardHeader>
+                    <CardTitle className="text-white flex items-center gap-2">
+                        <TrendingUp className="h-5 w-5 text-green-400" />
+                        Quick Presets
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex flex-wrap gap-3">
+                        {presets.map(preset => (
+                            <Button
+                                key={preset.name}
+                                variant="outline"
+                                className="border-slate-600 hover:bg-slate-700"
+                                onClick={() => handlePresetSelect(preset.name)}
+                            >
+                                <Badge variant="secondary" className="mr-2">{preset.symbol}</Badge>
+                                {preset.name.replace('_', ' ')}
+                            </Button>
+                        ))}
+                    </div>
+                </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Settings Panel */}
+                <Card className="bg-slate-800/50 border-slate-700">
+                    <CardHeader>
+                        <CardTitle className="text-white">EA Configuration</CardTitle>
+                        <CardDescription>Customize your Expert Advisor settings</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <Tabs defaultValue="general" className="space-y-4">
+                            <TabsList className="grid grid-cols-4 bg-slate-700">
+                                <TabsTrigger value="general">General</TabsTrigger>
+                                <TabsTrigger value="entry">Entry</TabsTrigger>
+                                <TabsTrigger value="risk">Risk</TabsTrigger>
+                                <TabsTrigger value="filters">Filters</TabsTrigger>
+                            </TabsList>
+
+                            {/* General Tab */}
+                            <TabsContent value="general" className="space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">EA Name</Label>
+                                        <Input
+                                            value={settings.ea_name}
+                                            onChange={e => setSettings({ ...settings, ea_name: e.target.value })}
+                                            className="bg-slate-700 border-slate-600"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Symbol</Label>
+                                        <Select
+                                            value={settings.symbol}
+                                            onValueChange={val => setSettings({ ...settings, symbol: val })}
+                                        >
+                                            <SelectTrigger className="bg-slate-700 border-slate-600">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="XAUUSD">XAUUSD (Gold)</SelectItem>
+                                                <SelectItem value="EURUSD">EURUSD</SelectItem>
+                                                <SelectItem value="GBPUSD">GBPUSD</SelectItem>
+                                                <SelectItem value="USDJPY">USDJPY</SelectItem>
+                                                <SelectItem value="BTCUSD">BTCUSD</SelectItem>
+                                                <SelectItem value="US30">US30 (Dow Jones)</SelectItem>
+                                                <SelectItem value="NAS100">NAS100</SelectItem>
+                                                <SelectItem value="Volatility 75 Index">V75 Index</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Fast EMA Period: {settings.ema_fast_period}</Label>
+                                    <Slider
+                                        value={[settings.ema_fast_period]}
+                                        onValueChange={([val]) => setSettings({ ...settings, ema_fast_period: val })}
+                                        min={5} max={100} step={1}
+                                        className="py-2"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Slow EMA Period: {settings.ema_slow_period}</Label>
+                                    <Slider
+                                        value={[settings.ema_slow_period]}
+                                        onValueChange={([val]) => setSettings({ ...settings, ema_slow_period: val })}
+                                        min={20} max={500} step={5}
+                                        className="py-2"
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-between">
+                                    <Label className="text-slate-300">Use Trend Filter (EMA)</Label>
+                                    <Switch
+                                        checked={settings.use_trend_filter}
+                                        onCheckedChange={val => setSettings({ ...settings, use_trend_filter: val })}
+                                    />
+                                </div>
+                            </TabsContent>
+
+                            {/* Entry Tab */}
+                            <TabsContent value="entry" className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">RSI Buy Zone: {settings.rsi_buy_min} - {settings.rsi_buy_max}</Label>
+                                    <div className="flex gap-4">
+                                        <Slider
+                                            value={[settings.rsi_buy_min]}
+                                            onValueChange={([val]) => setSettings({ ...settings, rsi_buy_min: val })}
+                                            min={10} max={50} step={1}
+                                        />
+                                        <Slider
+                                            value={[settings.rsi_buy_max]}
+                                            onValueChange={([val]) => setSettings({ ...settings, rsi_buy_max: val })}
+                                            min={20} max={60} step={1}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">RSI Sell Zone: {settings.rsi_sell_min} - {settings.rsi_sell_max}</Label>
+                                    <div className="flex gap-4">
+                                        <Slider
+                                            value={[settings.rsi_sell_min]}
+                                            onValueChange={([val]) => setSettings({ ...settings, rsi_sell_min: val })}
+                                            min={40} max={80} step={1}
+                                        />
+                                        <Slider
+                                            value={[settings.rsi_sell_max]}
+                                            onValueChange={([val]) => setSettings({ ...settings, rsi_sell_max: val })}
+                                            min={50} max={90} step={1}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between">
+                                    <Label className="text-slate-300">Use MACD Confirmation</Label>
+                                    <Switch
+                                        checked={settings.use_macd_confirmation}
+                                        onCheckedChange={val => setSettings({ ...settings, use_macd_confirmation: val })}
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Pullback Distance: {settings.pullback_distance_pips} pips</Label>
+                                    <Slider
+                                        value={[settings.pullback_distance_pips]}
+                                        onValueChange={([val]) => setSettings({ ...settings, pullback_distance_pips: val })}
+                                        min={5} max={200} step={5}
+                                    />
+                                </div>
+                            </TabsContent>
+
+                            {/* Risk Tab */}
+                            <TabsContent value="risk" className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Risk per Trade: {settings.risk_percent}%</Label>
+                                    <Slider
+                                        value={[settings.risk_percent]}
+                                        onValueChange={([val]) => setSettings({ ...settings, risk_percent: val })}
+                                        min={0.1} max={5} step={0.1}
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Risk:Reward Ratio: 1:{settings.risk_reward_ratio}</Label>
+                                    <Slider
+                                        value={[settings.risk_reward_ratio]}
+                                        onValueChange={([val]) => setSettings({ ...settings, risk_reward_ratio: val })}
+                                        min={1} max={5} step={0.1}
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Min SL (pips)</Label>
+                                        <Input
+                                            type="number"
+                                            value={settings.min_sl_pips}
+                                            onChange={e => setSettings({ ...settings, min_sl_pips: Number(e.target.value) })}
+                                            className="bg-slate-700 border-slate-600"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Max SL (pips)</Label>
+                                        <Input
+                                            type="number"
+                                            value={settings.max_sl_pips}
+                                            onChange={e => setSettings({ ...settings, max_sl_pips: Number(e.target.value) })}
+                                            className="bg-slate-700 border-slate-600"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between">
+                                    <Label className="text-slate-300">Use Breakeven</Label>
+                                    <Switch
+                                        checked={settings.use_breakeven}
+                                        onCheckedChange={val => setSettings({ ...settings, use_breakeven: val })}
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-between">
+                                    <Label className="text-slate-300">Use Trailing Stop</Label>
+                                    <Switch
+                                        checked={settings.use_trailing_stop}
+                                        onCheckedChange={val => setSettings({ ...settings, use_trailing_stop: val })}
+                                    />
+                                </div>
+                            </TabsContent>
+
+                            {/* Filters Tab */}
+                            <TabsContent value="filters" className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Max Spread: {settings.max_spread_points} points</Label>
+                                    <Slider
+                                        value={[settings.max_spread_points]}
+                                        onValueChange={([val]) => setSettings({ ...settings, max_spread_points: val })}
+                                        min={5} max={100} step={5}
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Clock className="h-4 w-4 text-blue-400" />
+                                        <Label className="text-slate-300">Trading Hours Filter</Label>
+                                    </div>
+                                    <Switch
+                                        checked={settings.use_trading_hours}
+                                        onCheckedChange={val => setSettings({ ...settings, use_trading_hours: val })}
+                                    />
+                                </div>
+
+                                {settings.use_trading_hours && (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label className="text-slate-300">Start Hour (UTC)</Label>
+                                            <Input
+                                                type="number"
+                                                value={settings.trading_hour_start}
+                                                onChange={e => setSettings({ ...settings, trading_hour_start: Number(e.target.value) })}
+                                                className="bg-slate-700 border-slate-600"
+                                                min={0} max={23}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label className="text-slate-300">End Hour (UTC)</Label>
+                                            <Input
+                                                type="number"
+                                                value={settings.trading_hour_end}
+                                                onChange={e => setSettings({ ...settings, trading_hour_end: Number(e.target.value) })}
+                                                className="bg-slate-700 border-slate-600"
+                                                min={0} max={23}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Shield className="h-4 w-4 text-yellow-400" />
+                                        <Label className="text-slate-300">News Filter (NFP, FOMC)</Label>
+                                    </div>
+                                    <Switch
+                                        checked={settings.use_news_filter}
+                                        onCheckedChange={val => setSettings({ ...settings, use_news_filter: val })}
+                                    />
+                                </div>
+                            </TabsContent>
+                        </Tabs>
+
+                        <Button
+                            onClick={generateEA}
+                            disabled={isLoading}
+                            className="w-full mt-6 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+                            size="lg"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                                    Generating...
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles className="mr-2 h-5 w-5" />
+                                    Generate EA
+                                </>
+                            )}
+                        </Button>
+                    </CardContent>
+                </Card>
+
+                {/* Code Preview */}
+                <Card className="bg-slate-800/50 border-slate-700">
+                    <CardHeader>
+                        <div className="flex justify-between items-center">
+                            <CardTitle className="text-white">Generated Code</CardTitle>
+                            {generatedCode && (
+                                <div className="flex gap-2">
+                                    <Button variant="outline" size="sm" onClick={copyCode}>
+                                        <Copy className="h-4 w-4 mr-1" /> Copy
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={downloadCode}>
+                                        <Download className="h-4 w-4 mr-1" /> Download
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                        {filePath && (
+                            <CardDescription className="text-green-400">
+                                ✓ Saved to: {filePath}
+                            </CardDescription>
+                        )}
+                    </CardHeader>
+                    <CardContent>
+                        <div className="bg-slate-900 rounded-lg p-4 h-[600px] overflow-auto">
+                            {generatedCode ? (
+                                <pre className="text-sm text-green-400 font-mono whitespace-pre-wrap">
+                                    {generatedCode.substring(0, 5000)}
+                                    {generatedCode.length > 5000 && '\n\n... (truncated for preview)'}
+                                </pre>
+                            ) : (
+                                <div className="h-full flex items-center justify-center text-slate-500">
+                                    <div className="text-center">
+                                        <Sparkles className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                                        <p>Configure your EA and click Generate</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+        </div>
+    );
+
+    if (isEmbedded) {
+        return content;
+    }
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
+            {content}
+        </div>
+    );
+}
