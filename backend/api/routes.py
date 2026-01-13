@@ -419,6 +419,8 @@ class CustomEARequest(BaseModel):
     min_sl_pips: float = 20.0
     max_sl_pips: float = 100.0
     use_breakeven: bool = True
+    breakeven_trigger_pips: float = 20.0
+    breakeven_offset_pips: float = 5.0
     use_trailing_stop: bool = False
     
     # Advanced Trailing Stop
@@ -483,6 +485,8 @@ async def generate_custom_ea(request: CustomEARequest):
         min_sl_pips=request.min_sl_pips,
         max_sl_pips=request.max_sl_pips,
         use_breakeven=request.use_breakeven,
+        breakeven_trigger_pips=request.breakeven_trigger_pips,
+        breakeven_buffer_pips=request.breakeven_offset_pips,
         
         # New Trailing Stop mappings
         use_trailing_stop=request.use_trailing_stop,
