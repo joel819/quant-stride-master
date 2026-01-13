@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8080"]
+    OPENAI_API_KEY: Optional[str] = None
     
     # MT5 Paths (Windows)
     MT5_TERMINAL_PATH: str = r"C:\Program Files\MetaTrader 5\terminal64.exe"

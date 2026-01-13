@@ -9,7 +9,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/use-toast';
-import { Loader2, Download, Copy, Sparkles, TrendingUp, Shield, Clock } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Loader2, Download, Copy, Sparkles, TrendingUp, Shield, Clock, BrainCircuit } from 'lucide-react';
 
 interface EASettings {
     ea_name: string;
@@ -110,6 +112,9 @@ export default function CustomEAGenerator({ isEmbedded = false }: Props) {
     const [generatedCode, setGeneratedCode] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const [filePath, setFilePath] = useState<string>('');
+    const [aiPrompt, setAiPrompt] = useState('');
+    const [isAiLoading, setIsAiLoading] = useState(false);
+    const [isAiOpen, setIsAiOpen] = useState(false);
     const { toast } = useToast();
 
     // Fetch presets on mount
@@ -168,6 +173,42 @@ export default function CustomEAGenerator({ isEmbedded = false }: Props) {
         }
     };
 
+
+
+
+    const handleAiAssist = async () => {
+        if (!aiPrompt.trim()) return;
+        setIsAiLoading(true);
+        try {
+            const response = await fetch(`${API_BASE}/ai-assist`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: aiPrompt }),
+            });
+
+            const newSettings = await response.json();
+
+            if (newSettings && typeof newSettings === 'object') {
+                setSettings({ ...defaultSettings, ...newSettings });
+                toast({
+                    title: '🤖 Strategy Generated!',
+                    description: 'AI has configured your EA settings.',
+                });
+                setIsAiOpen(false);
+            } else {
+                throw new Error('Invalid response from AI');
+            }
+        } catch (error) {
+            toast({
+                title: 'AI Error',
+                description: 'Failed to generate strategy. Check API Key.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsAiLoading(false);
+        }
+    };
+
     const copyCode = () => {
         navigator.clipboard.writeText(generatedCode);
         toast({ title: 'Copied!', description: 'Code copied to clipboard' });
@@ -205,6 +246,55 @@ export default function CustomEAGenerator({ isEmbedded = false }: Props) {
                         <TrendingUp className="h-5 w-5 text-green-400" />
                         Quick Presets
                     </CardTitle>
+                    <Dialog open={isAiOpen} onOpenChange={setIsAiOpen}>
+                        <DialogTrigger asChild>
+                            <Button variant="outline" className="bg-purple-900/50 border-purple-500/50 hover:bg-purple-900 text-purple-200">
+                                <BrainCircuit className="w-4 h-4 mr-2 text-purple-400" />
+                                AI Assistant
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="bg-slate-900 border-slate-700 text-slate-100">
+                            <DialogHeader>
+                                <DialogTitle className="flex items-center gap-2">
+                                    <Sparkles className="w-5 h-5 text-purple-400" />
+                                    AI Strategy Designer
+                                </DialogTitle>
+                                <DialogDescription className="text-slate-400">
+                                    Describe your strategy in plain English. The AI will configure all technical indicators, risk settings, and logic for you.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-4 py-4">
+                                <Textarea
+                                    placeholder="Example: Create a conservative Gold scalper that trades M5 pullbacks. Use EMA 50/200 for trend, RSI for entry, and a trailing stop of 20 pips. Risk 1% per trade."
+                                    value={aiPrompt}
+                                    onChange={(e) => setAiPrompt(e.target.value)}
+                                    className="h-32 bg-slate-800 border-slate-600 text-slate-100 placeholder:text-slate-500"
+                                />
+                                <div className="text-xs text-slate-500">
+                                    💡 Tip: Be specific about indicators (RSI, MACD), risk (%), and trading style.
+                                </div>
+                            </div>
+                            <DialogFooter>
+                                <Button
+                                    onClick={handleAiAssist}
+                                    disabled={isAiLoading || !aiPrompt.trim()}
+                                    className="w-full bg-gradient-to-r from-purple-600 to-blue-600"
+                                >
+                                    {isAiLoading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                            Designing Strategy...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles className="w-4 h-4 mr-2" />
+                                            Generate Settings
+                                        </>
+                                    )}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
                 </CardHeader>
                 <CardContent>
                     <div className="flex flex-wrap gap-3">
@@ -404,7 +494,7 @@ export default function CustomEAGenerator({ isEmbedded = false }: Props) {
                                             onCheckedChange={val => setSettings({ ...settings, use_breakeven: val })}
                                         />
                                     </div>
-                                    
+
                                     {settings.use_breakeven && (
                                         <div className="grid grid-cols-2 gap-3 pt-2">
                                             <div className="space-y-2">
@@ -594,7 +684,7 @@ export default function CustomEAGenerator({ isEmbedded = false }: Props) {
 
                                             <div className="text-xs text-slate-400 bg-slate-800 p-2 rounded">
                                                 <span>
-                                                    Example: Close {settings.partial_close_percent}% at {settings.partial_close_tp1_rr}R, 
+                                                    Example: Close {settings.partial_close_percent}% at {settings.partial_close_tp1_rr}R,
                                                     let remaining {100 - settings.partial_close_percent}% run to {settings.partial_close_tp2_rr}R
                                                     {settings.move_sl_after_partial && " (SL moves to breakeven after TP1)"}
                                                 </span>

@@ -458,6 +458,20 @@ class CustomEAResponse(BaseModel):
     backtest_instructions: dict = {}
 
 
+class AIRequest(BaseModel):
+    """Request for AI strategy generation."""
+    prompt: str
+
+
+@router.post("/ai-assist")
+async def ai_assist(request: AIRequest):
+    """
+    Generate strategy settings using AI.
+    """
+    from api.ai_service import generate_settings_from_prompt
+    return await generate_settings_from_prompt(request.prompt)
+
+
 @router.post("/generate-custom-ea", response_model=CustomEAResponse)
 async def generate_custom_ea(request: CustomEARequest):
     """
