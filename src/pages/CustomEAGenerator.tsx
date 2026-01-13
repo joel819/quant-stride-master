@@ -44,6 +44,11 @@ interface EASettings {
     trading_hour_start: number;
     trading_hour_end: number;
     use_news_filter: boolean;
+    use_partial_close: boolean;
+    partial_close_percent: number;
+    partial_close_tp1_rr: number;
+    partial_close_tp2_rr: number;
+    move_sl_after_partial: boolean;
 }
 
 interface Preset {
@@ -88,6 +93,11 @@ const defaultSettings: EASettings = {
     trading_hour_start: 8,
     trading_hour_end: 18,
     use_news_filter: true,
+    use_partial_close: false,
+    partial_close_percent: 50,
+    partial_close_tp1_rr: 1.0,
+    partial_close_tp2_rr: 2.0,
+    move_sl_after_partial: true,
 };
 
 interface Props {
@@ -525,6 +535,69 @@ export default function CustomEAGenerator({ isEmbedded = false }: Props) {
                                                 {settings.trailing_stop_type === 'step' && (
                                                     <span>Step: Stop moves in discrete steps as price advances by step size</span>
                                                 )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Partial Close Settings */}
+                                <div className="space-y-3 p-3 bg-slate-700/50 rounded-lg">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-slate-300 font-medium">Partial Close (Scale Out)</Label>
+                                        <Switch
+                                            checked={settings.use_partial_close}
+                                            onCheckedChange={val => setSettings({ ...settings, use_partial_close: val })}
+                                        />
+                                    </div>
+
+                                    {settings.use_partial_close && (
+                                        <div className="space-y-4 pt-2">
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-400 text-sm">Close % at TP1: {settings.partial_close_percent}%</Label>
+                                                <Slider
+                                                    value={[settings.partial_close_percent]}
+                                                    onValueChange={([val]) => setSettings({ ...settings, partial_close_percent: val })}
+                                                    min={25} max={75} step={5}
+                                                />
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div className="space-y-2">
+                                                    <Label className="text-slate-400 text-sm">TP1 (R:R)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={settings.partial_close_tp1_rr}
+                                                        onChange={e => setSettings({ ...settings, partial_close_tp1_rr: Number(e.target.value) })}
+                                                        className="bg-slate-700 border-slate-600"
+                                                    />
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label className="text-slate-400 text-sm">TP2 (R:R)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={settings.partial_close_tp2_rr}
+                                                        onChange={e => setSettings({ ...settings, partial_close_tp2_rr: Number(e.target.value) })}
+                                                        className="bg-slate-700 border-slate-600"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center justify-between">
+                                                <Label className="text-slate-400 text-sm">Move SL to Entry After TP1</Label>
+                                                <Switch
+                                                    checked={settings.move_sl_after_partial}
+                                                    onCheckedChange={val => setSettings({ ...settings, move_sl_after_partial: val })}
+                                                />
+                                            </div>
+
+                                            <div className="text-xs text-slate-400 bg-slate-800 p-2 rounded">
+                                                <span>
+                                                    Example: Close {settings.partial_close_percent}% at {settings.partial_close_tp1_rr}R, 
+                                                    let remaining {100 - settings.partial_close_percent}% run to {settings.partial_close_tp2_rr}R
+                                                    {settings.move_sl_after_partial && " (SL moves to breakeven after TP1)"}
+                                                </span>
                                             </div>
                                         </div>
                                     )}
