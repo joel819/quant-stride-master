@@ -29,7 +29,16 @@ interface EASettings {
     min_sl_pips: number;
     max_sl_pips: number;
     use_breakeven: boolean;
+    breakeven_trigger_pips: number;
+    breakeven_offset_pips: number;
     use_trailing_stop: boolean;
+    trailing_stop_type: 'fixed' | 'atr' | 'step';
+    trailing_start_pips: number;
+    trailing_distance_pips: number;
+    atr_period: number;
+    atr_multiplier: number;
+    step_size_pips: number;
+    step_distance_pips: number;
     max_spread_points: number;
     use_trading_hours: boolean;
     trading_hour_start: number;
@@ -64,7 +73,16 @@ const defaultSettings: EASettings = {
     min_sl_pips: 20,
     max_sl_pips: 100,
     use_breakeven: true,
+    breakeven_trigger_pips: 20,
+    breakeven_offset_pips: 2,
     use_trailing_stop: false,
+    trailing_stop_type: 'fixed',
+    trailing_start_pips: 30,
+    trailing_distance_pips: 20,
+    atr_period: 14,
+    atr_multiplier: 1.5,
+    step_size_pips: 10,
+    step_distance_pips: 10,
     max_spread_points: 20,
     use_trading_hours: true,
     trading_hour_start: 8,
@@ -367,20 +385,149 @@ export default function CustomEAGenerator({ isEmbedded = false }: Props) {
                                     </div>
                                 </div>
 
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-slate-300">Use Breakeven</Label>
-                                    <Switch
-                                        checked={settings.use_breakeven}
-                                        onCheckedChange={val => setSettings({ ...settings, use_breakeven: val })}
-                                    />
+                                {/* Breakeven Settings */}
+                                <div className="space-y-3 p-3 bg-slate-700/50 rounded-lg">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-slate-300 font-medium">Auto Breakeven</Label>
+                                        <Switch
+                                            checked={settings.use_breakeven}
+                                            onCheckedChange={val => setSettings({ ...settings, use_breakeven: val })}
+                                        />
+                                    </div>
+                                    
+                                    {settings.use_breakeven && (
+                                        <div className="grid grid-cols-2 gap-3 pt-2">
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-400 text-sm">Trigger (pips)</Label>
+                                                <Input
+                                                    type="number"
+                                                    value={settings.breakeven_trigger_pips}
+                                                    onChange={e => setSettings({ ...settings, breakeven_trigger_pips: Number(e.target.value) })}
+                                                    className="bg-slate-700 border-slate-600"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-400 text-sm">Offset (pips)</Label>
+                                                <Input
+                                                    type="number"
+                                                    value={settings.breakeven_offset_pips}
+                                                    onChange={e => setSettings({ ...settings, breakeven_offset_pips: Number(e.target.value) })}
+                                                    className="bg-slate-700 border-slate-600"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-slate-300">Use Trailing Stop</Label>
-                                    <Switch
-                                        checked={settings.use_trailing_stop}
-                                        onCheckedChange={val => setSettings({ ...settings, use_trailing_stop: val })}
-                                    />
+                                {/* Advanced Trailing Stop Settings */}
+                                <div className="space-y-3 p-3 bg-slate-700/50 rounded-lg">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-slate-300 font-medium">Advanced Trailing Stop</Label>
+                                        <Switch
+                                            checked={settings.use_trailing_stop}
+                                            onCheckedChange={val => setSettings({ ...settings, use_trailing_stop: val })}
+                                        />
+                                    </div>
+
+                                    {settings.use_trailing_stop && (
+                                        <div className="space-y-4 pt-2">
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-400 text-sm">Trailing Type</Label>
+                                                <Select
+                                                    value={settings.trailing_stop_type}
+                                                    onValueChange={(val: 'fixed' | 'atr' | 'step') => setSettings({ ...settings, trailing_stop_type: val })}
+                                                >
+                                                    <SelectTrigger className="bg-slate-700 border-slate-600">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="fixed">Fixed Distance</SelectItem>
+                                                        <SelectItem value="atr">ATR-Based (Dynamic)</SelectItem>
+                                                        <SelectItem value="step">Step-Wise</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-400 text-sm">Start After (pips): {settings.trailing_start_pips}</Label>
+                                                <Slider
+                                                    value={[settings.trailing_start_pips]}
+                                                    onValueChange={([val]) => setSettings({ ...settings, trailing_start_pips: val })}
+                                                    min={5} max={100} step={5}
+                                                />
+                                            </div>
+
+                                            {settings.trailing_stop_type === 'fixed' && (
+                                                <div className="space-y-2">
+                                                    <Label className="text-slate-400 text-sm">Trail Distance (pips): {settings.trailing_distance_pips}</Label>
+                                                    <Slider
+                                                        value={[settings.trailing_distance_pips]}
+                                                        onValueChange={([val]) => setSettings({ ...settings, trailing_distance_pips: val })}
+                                                        min={5} max={100} step={5}
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {settings.trailing_stop_type === 'atr' && (
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="space-y-2">
+                                                        <Label className="text-slate-400 text-sm">ATR Period</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={settings.atr_period}
+                                                            onChange={e => setSettings({ ...settings, atr_period: Number(e.target.value) })}
+                                                            className="bg-slate-700 border-slate-600"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <Label className="text-slate-400 text-sm">ATR Multiplier</Label>
+                                                        <Input
+                                                            type="number"
+                                                            step="0.1"
+                                                            value={settings.atr_multiplier}
+                                                            onChange={e => setSettings({ ...settings, atr_multiplier: Number(e.target.value) })}
+                                                            className="bg-slate-700 border-slate-600"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {settings.trailing_stop_type === 'step' && (
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="space-y-2">
+                                                        <Label className="text-slate-400 text-sm">Step Size (pips)</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={settings.step_size_pips}
+                                                            onChange={e => setSettings({ ...settings, step_size_pips: Number(e.target.value) })}
+                                                            className="bg-slate-700 border-slate-600"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <Label className="text-slate-400 text-sm">Step Distance (pips)</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={settings.step_distance_pips}
+                                                            onChange={e => setSettings({ ...settings, step_distance_pips: Number(e.target.value) })}
+                                                            className="bg-slate-700 border-slate-600"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <div className="text-xs text-slate-400 bg-slate-800 p-2 rounded">
+                                                {settings.trailing_stop_type === 'fixed' && (
+                                                    <span>Fixed: Trail stop follows price at a constant distance</span>
+                                                )}
+                                                {settings.trailing_stop_type === 'atr' && (
+                                                    <span>ATR: Trail distance adapts to market volatility (ATR × Multiplier)</span>
+                                                )}
+                                                {settings.trailing_stop_type === 'step' && (
+                                                    <span>Step: Stop moves in discrete steps as price advances by step size</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </TabsContent>
 
